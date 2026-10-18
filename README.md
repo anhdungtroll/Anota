@@ -1,6 +1,6 @@
 # Anota
 
-A GoodNotes-style handwriting app for Android (installable PWA, works offline, no accounts, no servers).
+An offline note taking app for Android
 
 **Features**
 - Notebooks: ruled / grid / dot / blank paper in white, cream or dark; multiple pages, add / delete / jump via the page sheet
@@ -13,8 +13,6 @@ A GoodNotes-style handwriting app for Android (installable PWA, works offline, n
 
 ## Install on your phone / tablet
 The app is plain static files. Host the folder anywhere with HTTPS (GitHub Pages, Netlify Drop, Cloudflare Pages), open the URL in Chrome on Android, then menu → **Install app**.
-
-Quick local test on a computer: `python3 -m http.server 8000` and open http://localhost:8000.
 
 ## Turn it into a real APK (optional)
 With Node + Android Studio installed:
