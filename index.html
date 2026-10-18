@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#f3f4f8">
+<meta name="mobile-web-app-capable" content="yes">
+<title>InkNote</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ LIBRARY ============ -->
+<section id="library" class="screen">
+  <header class="lib-head">
+    <div class="brand"><img src="icons/icon-192.png" alt="" class="logo"><h1>InkNote</h1></div>
+    <label class="search"><span id="searchIcon"></span><input id="search" type="search" placeholder="Search notes" autocomplete="off"></label>
+  </header>
+  <div class="filters" id="filters"></div>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" hidden>
+    <div class="empty-art" id="emptyArt"></div>
+    <h2>Nothing here yet</h2>
+    <p>Start a notebook, open a whiteboard, or import a PDF to mark up.</p>
+  </div>
+  <div class="fab-wrap">
+    <div id="fabmenu" class="fabmenu" hidden></div>
+    <button id="fab" class="fab" aria-label="Create new"></button>
+  </div>
+</section>
+
+<!-- ============ EDITOR ============ -->
+<section id="editor" class="screen" hidden>
+  <header class="topbar">
+    <button id="btnBack" class="ib" aria-label="Back"></button>
+    <button id="docTitle" class="title" aria-label="Rename"></button>
+    <button id="btnUndo" class="ib" aria-label="Undo"></button>
+    <button id="btnRedo" class="ib" aria-label="Redo"></button>
+    <button id="btnPages" class="ib" aria-label="Pages"></button>
+    <button id="btnMore" class="ib" aria-label="More"></button>
+  </header>
+
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <button id="pageInd" class="pageind" hidden></button>
+    <div id="zoomInd" class="zoomind"></div>
+    <div id="selbar" class="selbar" hidden></div>
+  </div>
+
+  <nav class="dock" id="dock"></nav>
+  <div id="pop" class="pop" hidden></div>
+  <div id="menu" class="menu" hidden></div>
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet-card">
+      <div class="sheet-head"><h3>Pages</h3><span class="grow"></span><button id="sheetAdd" class="btn small"></button><button id="sheetClose" class="ib"></button></div>
+      <div id="sheetGrid" class="sheet-grid"></div>
+    </div>
+  </div>
+</section>
+
+<dialog id="dlg"></dialog>
+<div id="toast" class="toast" hidden></div>
+<input type="file" id="file" accept="application/pdf,.pdf" hidden>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
