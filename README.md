@@ -1,0 +1,2 @@
+# inknote
+a testing environment
