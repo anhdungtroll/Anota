@@ -1,13 +1,16 @@
-// Tiny IndexedDB wrapper: meta (library cards), docs (pages + strokes), pdfs (original PDF bytes)
+// Tiny IndexedDB wrapper.
+//  meta   : library cards + folders
+//  docs   : pages, strokes, objects
+//  pdfs   : original PDF bytes
+//  assets : images attached to notes
 let dbp;
 function open() {
   return (dbp ||= new Promise((res, rej) => {
-    const r = indexedDB.open('inknote', 1);
+    const r = indexedDB.open('inknote', 2);
     r.onupgradeneeded = () => {
       const d = r.result;
-      d.createObjectStore('meta', { keyPath: 'id' });
-      d.createObjectStore('docs', { keyPath: 'id' });
-      d.createObjectStore('pdfs');
+      for (const n of ['meta', 'docs']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
+      for (const n of ['pdfs', 'assets']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n);
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -35,5 +38,11 @@ export const db = {
   getMeta: (id) => run(['meta'], 'readonly', (m) => m.get(id)),
   putPdf: (id, buf) => run(['pdfs'], 'readwrite', (p) => p.put(buf, id)),
   getPdf: (id) => run(['pdfs'], 'readonly', (p) => p.get(id)),
-  remove: (id) => run(['meta', 'docs', 'pdfs'], 'readwrite', (m, d, p) => { m.delete(id); d.delete(id); return p.delete(id); }),
+  putAsset: (id, blob) => run(['assets'], 'readwrite', (a) => a.put(blob, id)),
+  getAsset: (id) => run(['assets'], 'readonly', (a) => a.get(id)),
+  removeDoc: (id, assetIds = []) => run(['meta', 'docs', 'pdfs', 'assets'], 'readwrite', (m, d, p, a) => {
+    for (const x of assetIds) a.delete(x);
+    m.delete(id); d.delete(id); return p.delete(id);
+  }),
+  removeMeta: (id) => run(['meta'], 'readwrite', (m) => m.delete(id)),
 };

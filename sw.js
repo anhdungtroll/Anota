@@ -1,4 +1,4 @@
-const VERSION = 'inknote-v1';
+const VERSION = 'inknote-v3';
 const ASSETS = [
   './', 'index.html', 'styles.css', 'app.js', 'db.js', 'pdfout.js', 'polyfills.js', 'manifest.webmanifest',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'icons/icon-192.png', 'icons/icon-512.png',
