@@ -1,4 +1,4 @@
-# InkNote
+# Anota
 
 A GoodNotes-style handwriting app for Android (installable PWA, works offline, no accounts, no servers).
 
@@ -14,6 +14,14 @@ A GoodNotes-style handwriting app for Android (installable PWA, works offline, n
 - **Select:** lasso or tap to select, move, copy, recolour and delete.
 - **Gestures (Settings → Gestures and pen):** two-finger tap undo, three-finger tap redo, stylus-only palm rejection.
 - **S Pen:** hold the pen button to erase while writing; click it while hovering to switch the eraser on or off; the eraser end works too.
+- **Split screen:** tap **Split** in the tab bar (or long-press a tab, or a note's ⋮ menu) to open a second note beside the first. Drag the divider to resize. Both sides can show the same note and stay in sync.
+- **Jump buttons:** Insert → Jump. Pick a note and tap the spot you want; tapping the button later (finger, or the Move tool) flies you there, in the same note or another.
+- **Comments:** Insert → Comment, then tap anywhere. Tap the marker to read, recolour or delete.
+- **Rich text:** headings, bullets, bold, underline and strikethrough per line from the toolbar above the text box.
+- **Resize anything:** select with the lasso and pull the corner handle (strokes, images, links, comments, groups).
+- **Laser pointer** and a **quick brush size** button beside the colour dot.
+- **Three looks** (Settings → Look): Glass, Clay and Classic (the original).
+- **Pen tip alignment** and an S Pen button tester in Settings.
 - Focus mode, undo / redo, autosave, export to PDF, share a PDF into the app from Android.
 
 ## Install on your phone / tablet
@@ -26,7 +34,7 @@ With Node + Android Studio installed:
 
 ```bash
 npm i -D @capacitor/cli @capacitor/core @capacitor/android
-npx cap init InkNote com.example.inknote --web-dir .
+npx cap init Anota com.example.inknote --web-dir .
 npx cap add android
 npx cap sync
 npx cap open android   # then Build → Build APK

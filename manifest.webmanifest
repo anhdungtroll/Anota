@@ -1,6 +1,6 @@
 {
-  "name": "InkNote",
-  "short_name": "InkNote",
+  "name": "Anota",
+  "short_name": "Anota",
   "description": "Handwritten notebooks, infinite whiteboards and PDF annotation.",
   "id": "./",
   "start_url": "./",

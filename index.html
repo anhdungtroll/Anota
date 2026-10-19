@@ -3,22 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
-<meta name="theme-color" content="#f3f4f8">
+<meta name="theme-color" content="#e9eefc">
+<meta name="application-name" content="Anota">
+<meta name="apple-mobile-web-app-title" content="Anota">
 <meta name="mobile-web-app-capable" content="yes">
-<title>InkNote</title>
+<title>Anota</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body class="at-home">
+<div id="wrap">
+<div id="main">
 
 <nav id="tabs" class="tabs" aria-label="Open notes"></nav>
 
 <!-- ============ HOME / LIBRARY ============ -->
 <section id="library" class="screen">
   <header class="lib-head">
-    <div class="brand"><img src="icons/icon-192.png" alt="" class="logo"><h1>InkNote</h1></div>
+    <div class="brand"><img src="icons/icon-192.png" alt="" class="logo"><h1>Anota</h1></div>
     <label class="search"><span id="searchIcon"></span><input id="search" type="search" placeholder="Search notes" autocomplete="off"></label>
     <button id="btnSettings" class="ib" aria-label="Gestures and pen settings"></button>
   </header>
@@ -67,8 +71,12 @@
   <button id="focusExit" class="focus-exit" aria-label="Leave focus mode"></button>
 </section>
 
-<dialog id="dlg"></dialog>
 <div id="toast" class="toast" hidden></div>
+</div><!-- /main -->
+<div id="divider" class="divider" role="separator" aria-label="Resize split screen"><i></i></div>
+<aside id="pane" class="pane-wrap"><iframe id="paneFrame" title="Second note"></iframe></aside>
+</div><!-- /wrap -->
+<dialog id="dlg"></dialog>
 <input type="file" id="file" accept="application/pdf,.pdf" hidden>
 <input type="file" id="imgfile" accept="image/*" hidden>
 <input type="file" id="camfile" accept="image/*" capture="environment" hidden>

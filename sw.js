@@ -1,5 +1,5 @@
-// InkNote service worker: network-first so updates always arrive when online, cache fallback for offline use.
-const VERSION = 'inknote-v4';
+// Anota service worker: network-first so updates always arrive when online, cache fallback for offline use.
+const VERSION = 'anota-v5';
 const ASSETS = [
   './', 'index.html', 'styles.css', 'app.js', 'db.js', 'pdfout.js', 'polyfills.js', 'manifest.webmanifest',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'icons/icon-192.png', 'icons/icon-512.png',
@@ -19,7 +19,7 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const req = e.request, url = new URL(req.url);
-  // Android "Share → InkNote" with a PDF
+  // Android "Share → Anota" with a PDF
   if (req.method === 'POST' && url.pathname.endsWith('/share-target')) {
     e.respondWith((async () => {
       try {
