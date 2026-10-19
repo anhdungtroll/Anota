@@ -138,6 +138,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
+const APP_VERSION = '2.0 (build 4)';
 const PW = 800, PH = 1131, GAP = 22, ADD_H = 64;
 const PAPER = { white: '#ffffff', cream: '#fbf5e4', dark: '#1f2333' };
 const PALETTE = ['#1b1b1f', '#e03131', '#f76707', '#f59f00', '#2f9e44', '#1c7ed6', '#7048e8', '#e64980', '#868e96', '#f4f4f6'];
@@ -2116,6 +2117,7 @@ function settingsDialog() {
       row('Hold still to perfect a shape', 'Draw a line, circle, box or triangle and pause', [[true, 'On'], [false, 'Off']], () => S.holdShape, (v) => { S.holdShape = v; prefs.set('holdShape', v); }));
   };
   paint();
+  body.append(h('p', { class: 'note', style: 'margin-top:12px' }, 'InkNote ' + APP_VERSION));
   modal({ title: 'Gestures and pen', body, actions: [{ label: 'Done', kind: 'primary' }] });
 }
 

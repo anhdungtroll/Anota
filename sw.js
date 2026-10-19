@@ -1,11 +1,15 @@
-const VERSION = 'inknote-v3';
+// InkNote service worker: network-first so updates always arrive when online, cache fallback for offline use.
+const VERSION = 'inknote-v4';
 const ASSETS = [
   './', 'index.html', 'styles.css', 'app.js', 'db.js', 'pdfout.js', 'polyfills.js', 'manifest.webmanifest',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(VERSION)
+      .then((c) => Promise.all(ASSETS.map((a) => c.add(new Request(a, { cache: 'reload' })))))
+      .then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(
@@ -31,12 +35,16 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (req.method !== 'GET' || url.origin !== location.origin) return;
-  // cache-first, refresh in background
-  e.respondWith(caches.match(req, { ignoreSearch: true }).then((hit) => {
-    const net = fetch(req).then((res) => {
+  e.respondWith((async () => {
+    try {
+      const res = await fetch(req, { cache: 'no-cache' });
       if (res && res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
       return res;
-    }).catch(() => hit);
-    return hit || net;
-  }));
+    } catch {
+      const hit = await caches.match(req, { ignoreSearch: true });
+      if (hit) return hit;
+      if (req.mode === 'navigate') { const idx = await caches.match('index.html'); if (idx) return idx; }
+      throw new Error('offline');
+    }
+  })());
 });
