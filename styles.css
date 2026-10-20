@@ -357,7 +357,7 @@ body.pane .brand h1{font-size:22px}
 .pickbar{position:absolute;z-index:40;left:50%;top:calc(var(--tabh) + 10px);transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:var(--accent);color:#fff;border-radius:16px;padding:8px 8px 8px 14px;box-shadow:var(--shadow);font-weight:650;font-size:14px;max-width:calc(100% - 16px);animation:riseX .2s both}
 .pickbar .btn{background:rgba(255,255,255,.22);color:#fff}
 
-.stylecards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px}
+.stylecards{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px;margin-bottom:6px}
 .scard{border-radius:14px;padding:8px 6px 8px;background:var(--panel2);display:flex;flex-direction:column;align-items:center;gap:4px;font-weight:700;font-size:13px;border:2px solid transparent}
 .scard small{font-size:11px;color:var(--muted);font-weight:600}
 .scard.on{border-color:var(--accent);background:var(--accent-soft)}
@@ -376,12 +376,6 @@ body.pane .brand h1{font-size:22px}
 .sprev.og i:nth-child(2){left:8%;width:38%;top:46%;height:38%;border-radius:4px;background:#fff;box-shadow:0 1px 3px rgba(20,25,60,.2)}
 .sprev.og i:nth-child(3){right:8%;width:38%;top:46%;height:38%;border-radius:4px;background:#3b5bdb}
 
-.calib{position:fixed;inset:0;z-index:300;background:rgba(15,18,35,.9);color:#fff;touch-action:none;user-select:none}
-.calib-msg{position:absolute;left:0;right:0;top:9%;text-align:center;font-weight:700;font-size:18px;padding:0 20px}
-.calib-t{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:2px solid #ff6b6b;pointer-events:none}
-.calib-t::before,.calib-t::after{content:"";position:absolute;background:#ff6b6b;left:50%;top:50%;transform:translate(-50%,-50%)}
-.calib-t::before{width:2px;height:70px}.calib-t::after{width:70px;height:2px}
-.calib-x{position:absolute;left:50%;bottom:8%;transform:translateX(-50%)}
 .pentest{height:120px;border-radius:14px;border:2px dashed var(--accent);display:grid;place-items:center;text-align:center;padding:10px;font-size:14px;color:var(--muted);touch-action:none;margin-bottom:10px;background:var(--accent-soft)}
 .pentest-log{font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--muted);max-height:190px;overflow:auto;margin-bottom:6px}
 select.field{appearance:auto}
@@ -506,11 +500,6 @@ html[data-style=clay] .toast{border-radius:20px}
 @media (prefers-reduced-transparency:reduce){html[data-style=glass] *{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}}
 
 /* pen alignment */
-.nudges{display:flex;gap:10px}
-.nudge{display:flex;align-items:center;gap:6px;flex:1}
-.nudge .seg{flex:none;width:38px;height:38px;font-size:20px;font-weight:700;margin:0}
-.nudge .numf{margin:0;padding:8px 6px;text-align:center;min-width:0}
-.penpad{width:100%;height:auto;aspect-ratio:3.2;border-radius:12px;background:#fff;touch-action:none;box-shadow:inset 0 0 0 1px var(--line)}
 .pen-state{padding:8px 12px;border-radius:10px;background:var(--panel2);font-weight:700;font-size:14px;margin-bottom:10px}
 .pen-state.on{background:#2f9e44;color:#fff}
 
@@ -554,3 +543,13 @@ html[data-style=clay] .toast{border-radius:20px}
 .zwctl button.on{background:var(--accent);color:#fff}
 .zwctl .ex{color:#e03131}
 .zwbox{position:absolute;z-index:5;pointer-events:none;border:2px solid #3b5bdb;border-radius:6px;background:rgba(59,91,219,.08);box-shadow:0 0 0 1px rgba(255,255,255,.6)}
+.sprev.custom{background:var(--cb,#fdf6e3)}
+.sprev.custom i:nth-child(1){left:10%;right:10%;top:16%;height:22%;border-radius:8px;background:var(--ca,#d9480f)}
+.sprev.custom i:nth-child(2){left:10%;width:34%;top:48%;height:34%;border-radius:8px;background:var(--cp,#fff)}
+.sprev.custom i:nth-child(3){right:10%;width:34%;top:48%;height:34%;border-radius:8px;background:var(--cp,#fff);box-shadow:inset 0 0 0 2px var(--ca,#d9480f)}
+.customrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.cpick{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}
+.cpick input{width:44px;height:36px;border:0;padding:0;border-radius:10px;background:none;cursor:pointer}
+.vidbox{position:absolute;z-index:6;background:#000;border-radius:14px;overflow:visible;box-shadow:var(--shadow);transform-origin:50% 50%}
+.vidbox iframe,.vidbox video{width:100%;height:100%;border:0;border-radius:14px;background:#000;display:block}
+.vidx{position:absolute;top:-12px;right:-12px;width:30px;height:30px;border-radius:50%;background:#e03131;color:#fff;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.4)}

@@ -61,3 +61,16 @@ npx cap open android   # then Build → Build APK
 - Folder emoji icons, Quick note (+ menu), whiteboard minimap.
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
+
+## What's new in 3.2
+
+- Icon zoomed in (no black borders on the tablet home screen).
+- Pen offset and calibration removed; the pen writes exactly where it touches.
+- Laser drawn as one smooth ribbon (no squares); dot-only mode removed.
+- Presentation mode ends when you leave the note or the app.
+- S Pen button: also handles the long-press/context-menu style of click, and works whatever pointer type the tablet reports. Settings > S Pen button test shows what your tablet sends.
+- Rotate: handle above a selection (snaps to 15 degrees) plus a quick 90 degree Rotate button; works on images, text, video cards and ink.
+- Word (.docx) import: converts to pages you can annotate like a PDF (text, lists, tables, pictures).
+- Custom theme: pick a background and an accent colour (Settings > Look > Custom).
+- Video links: Insert > Video (YouTube, Vimeo or a direct video file) plays on the page.
+- Code clean-up and bug fixes.
