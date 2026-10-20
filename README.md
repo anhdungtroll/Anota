@@ -42,3 +42,22 @@ npx cap open android   # then Build → Build APK
 
 ## Files
 `index.html` UI shell · `styles.css` · `app.js` editor, ink engine, library · `db.js` IndexedDB storage · `pdfout.js` PDF export · `polyfills.js` · `sw.js` offline cache + share target · `vendor/` pdf.js (Apache-2.0)
+
+## What's new in 3.1
+
+- New app icon, and a "Pen only" finger-input label.
+- Pen alignment: type your own X/Y pixel offset, use the practice pad, reset or test the S Pen button.
+- S Pen button: pressing it mid-stroke now switches to the eraser, and the test dialog shows live button state.
+- Laser pointer: size slider, smoother lines at speed, trail or dot style, presentation mode (menu > Present).
+- Up to 3 screens: long-press a tab or a library card and drag it to the screen edge.
+- Eraser modes: Stroke, Area (rubs out only the part you touch) and Highlighter-only.
+- Scribble to erase, and "hold on a closed loop" to select what is inside (Settings).
+- Shapes: diamond, pentagon, hexagon, star, optional fill; hold-to-perfect recognises 5-8 sided polygons.
+- Digital ruler with degree readout and snapping (Insert > Ruler).
+- Zoom window: write large, it lands small, and slides along as you write (Insert > Zoom).
+- Elements: save ink/text for reuse, plus emoji stamps (Insert > Elements).
+- Paper: Cornell and music staff, line spacing, custom line colour.
+- Pages: duplicate, reorder, bookmark (with a bookmarks filter and page ribbon).
+- Folder emoji icons, Quick note (+ menu), whiteboard minimap.
+
+Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.

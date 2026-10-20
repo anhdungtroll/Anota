@@ -305,20 +305,17 @@ body.focus .menu{top:64px}
    v3: split screen, new components, and the three looks
    ===================================================================== */
 #wrap{position:fixed;inset:0;display:flex;background:var(--bg)}
-#main{position:relative;flex:1 1 0;min-width:0;min-height:0;overflow:hidden;transform:translateZ(0)}
-.divider,.pane-wrap{display:none}
-body.split .divider{display:flex;align-items:center;justify-content:center;flex:0 0 22px;cursor:col-resize;touch-action:none;background:var(--tabbar);z-index:2}
+#main{position:relative;flex:1 1 0%;min-width:0;min-height:0;overflow:hidden;transform:translateZ(0)}
+.divider{display:flex;align-items:center;justify-content:center;flex:0 0 22px;cursor:col-resize;touch-action:none;background:var(--tabbar);z-index:2}
 .divider i{width:5px;height:56px;border-radius:3px;background:var(--muted);opacity:.55}
-body.split .pane-wrap{display:block;flex:1 1 0;min-width:0;min-height:0;position:relative}
-body.split #main{flex:0 0 var(--split,50%)}
-#wrap{--split:50%}
+aside.pane-wrap{display:block;flex:1 1 0%;min-width:0;min-height:0;position:relative}
 .pane-wrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--bg)}
 body.dragging .pane-wrap iframe{pointer-events:none}
 body.split .dock{max-width:calc(100% - 12px)}
 body.split .pop{max-width:calc(100% - 16px)}
 @media (orientation:portrait){
   #wrap{flex-direction:column}
-  body.split .divider{flex:0 0 22px;cursor:row-resize}
+    .divider{cursor:row-resize}
   .divider i{width:56px;height:5px}
 }
 .tab.split{margin-left:6px;gap:6px;padding:0 12px;color:var(--accent)}
@@ -507,3 +504,53 @@ html[data-style=clay] .pg .pt{border-radius:16px}
 html[data-style=clay] .toast{border-radius:20px}
 
 @media (prefers-reduced-transparency:reduce){html[data-style=glass] *{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}}
+
+/* pen alignment */
+.nudges{display:flex;gap:10px}
+.nudge{display:flex;align-items:center;gap:6px;flex:1}
+.nudge .seg{flex:none;width:38px;height:38px;font-size:20px;font-weight:700;margin:0}
+.nudge .numf{margin:0;padding:8px 6px;text-align:center;min-width:0}
+.penpad{width:100%;height:auto;aspect-ratio:3.2;border-radius:12px;background:#fff;touch-action:none;box-shadow:inset 0 0 0 1px var(--line)}
+.pen-state{padding:8px 12px;border-radius:10px;background:var(--panel2);font-weight:700;font-size:14px;margin-bottom:10px}
+.pen-state.on{background:#2f9e44;color:#fff}
+
+/* drag to split */
+.tab{touch-action:none}
+.card.lifted,.tab.lifted{transform:scale(1.04);filter:brightness(1.05)}
+.dropzones{position:fixed;inset:0;z-index:400;pointer-events:none}
+.dz{position:fixed;border:2px dashed var(--accent);background:var(--accent-soft);border-radius:18px;display:grid;place-items:center;opacity:.9;transition:background .12s,transform .12s}
+.dz span{background:var(--panel);color:var(--ink);padding:8px 16px;border-radius:12px;font-weight:700;font-size:15px;box-shadow:var(--shadow)}
+.dz.hot{background:rgba(76,111,255,.38);transform:scale(1.01)}
+.dragghost{position:fixed;left:0;top:0;z-index:401;pointer-events:none;display:flex;align-items:center;gap:8px;background:var(--panel);color:var(--ink);padding:10px 16px;border-radius:14px;box-shadow:var(--shadow);font-weight:700;font-size:14px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.segs.shapes{flex-wrap:wrap}.segs.shapes .seg{flex:1 0 17%}
+.pgtools{position:absolute;left:4px;right:4px;bottom:26px;display:flex;gap:4px;justify-content:center;opacity:0;transition:opacity .15s}
+.pg:hover .pgtools,.pg:focus-within .pgtools,.pg.cur .pgtools{opacity:1}
+@media (hover:none){.pgtools{opacity:1}}
+.pgtools button{width:28px;height:28px;border-radius:9px;background:var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.25);display:grid;place-items:center;color:var(--ink)}
+.pgtools button.on{background:#e8590c;color:#fff}
+.pgtools .flip .svg{transform:scaleX(-1)}
+#sheetBm.on{background:#e8590c;color:#fff}
+.minimap{position:absolute;left:12px;bottom:84px;width:150px;height:100px;border-radius:12px;background:var(--panel);box-shadow:var(--shadow);z-index:4;touch-action:none}
+.femoji{position:absolute;left:0;right:0;top:34%;text-align:center;font-size:34px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25));pointer-events:none}
+.emojirow{display:flex;flex-wrap:wrap;gap:6px}
+.emojirow .em{width:40px;height:40px;border-radius:12px;background:var(--panel2);font-size:20px}
+.emojirow .em.on{outline:2px solid var(--accent)}
+.presbar{position:fixed;z-index:50;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:6px;padding:6px;border-radius:16px;background:rgba(20,22,40,.82);backdrop-filter:blur(10px)}
+.presbar button{padding:9px 16px;border-radius:11px;color:#fff;font-weight:700}
+.presbar button.on{background:#ff2d2d}
+.presbar .ex{background:rgba(255,255,255,.16)}
+.thumb.folder{position:relative}
+.elgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-height:46vh;overflow:auto}
+.el{position:relative;border-radius:14px;background:var(--panel2);aspect-ratio:1}
+.el>button:first-child{width:100%;height:100%;display:grid;place-items:center}
+.el canvas{width:100%;height:100%;background:#fff;border-radius:14px}
+.el .x{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center}
+.emojirow.stamps{max-height:46vh;overflow:auto}
+.emojirow.stamps .em{font-size:26px;width:46px;height:46px}
+.zw{position:absolute;z-index:7;left:50%;bottom:86px;transform:translateX(-50%);background:var(--panel);border-radius:16px;box-shadow:var(--shadow);padding:6px;touch-action:none}
+.zw canvas{display:block;border-radius:11px;background:#fff;touch-action:none;outline:1px solid rgba(60,80,160,.25)}
+.zwctl{display:flex;gap:4px;margin-top:6px;justify-content:center;flex-wrap:wrap}
+.zwctl button{min-width:36px;height:32px;padding:0 9px;border-radius:10px;background:var(--panel2);font-weight:700;font-size:13px}
+.zwctl button.on{background:var(--accent);color:#fff}
+.zwctl .ex{color:#e03131}
+.zwbox{position:absolute;z-index:5;pointer-events:none;border:2px solid #3b5bdb;border-radius:6px;background:rgba(59,91,219,.08);box-shadow:0 0 0 1px rgba(255,255,255,.6)}

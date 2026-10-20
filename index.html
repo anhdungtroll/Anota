@@ -9,7 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <title>Anota</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/favicon-64.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -57,6 +57,7 @@
     <div id="zoomInd" class="zoomind"></div>
     <div id="flash" class="flash"></div>
     <div id="selbar" class="selbar" hidden></div>
+    <canvas id="minimap" class="minimap" width="300" height="200" hidden></canvas>
   </div>
 
   <nav class="dock" id="dock"></nav>
@@ -64,7 +65,7 @@
   <div id="menu" class="menu" hidden></div>
   <div id="sheet" class="sheet" hidden>
     <div class="sheet-card">
-      <div class="sheet-head"><h3>Pages</h3><span class="grow"></span><button id="sheetAdd" class="btn small"></button><button id="sheetClose" class="ib"></button></div>
+      <div class="sheet-head"><h3>Pages</h3><span class="grow"></span><button id="sheetBm" class="btn small ghost" aria-label="Show bookmarked pages only">★ Bookmarks</button><button id="sheetAdd" class="btn small"></button><button id="sheetClose" class="ib"></button></div>
       <div id="sheetGrid" class="sheet-grid"></div>
     </div>
   </div>
@@ -73,8 +74,6 @@
 
 <div id="toast" class="toast" hidden></div>
 </div><!-- /main -->
-<div id="divider" class="divider" role="separator" aria-label="Resize split screen"><i></i></div>
-<aside id="pane" class="pane-wrap"><iframe id="paneFrame" title="Second note"></iframe></aside>
 </div><!-- /wrap -->
 <dialog id="dlg"></dialog>
 <input type="file" id="file" accept="application/pdf,.pdf" hidden>
