@@ -62,6 +62,12 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.6
+- Dialogs (Settings included) keep their buttons pinned at the bottom; only the content scrolls.
+- Settings > S Pen: Hold-still delay slider (0.3 to 2 s) for shape perfecting / loop select.
+- Pages sheet > Select: pick pages and send them to a new whiteboard named after the note. Each page background is its own picture you can delete.
+- Tabs: hold a tab and slide it along the bar to reorder (drag it down instead to open in split screen). The tab strip scrolls; Home, +, and Split stay fixed.
+
 ## What's new in 3.5
 - Pen tip alignment: fixed the drawing surface being sized while the editor's opening animation was still shrinking it (about 1.5%), which made the ring and ink drift off the tip, more so towards the right. Pointer positions are now also mapped by the canvas's real on-screen size.
 - Select tool panel redesigned (icon tiles, quick presets) and it stays open while you choose. Panels that rebuild themselves no longer close by accident.

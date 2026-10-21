@@ -622,3 +622,20 @@ html[data-style=clay] .toast{border-radius:20px}
 .qd.slot small{font-size:10px;font-weight:700;opacity:.7}
 .qd.slot.on{border-style:solid}
 .qsave{width:100%;margin-top:8px}
+
+/* v3.6 pinned dialog buttons, scrolling tab strip, page picking */
+dialog[open]{display:flex;flex-direction:column;overflow:hidden}
+dialog .dlg-body{flex:1 1 auto;min-height:0;overflow-y:auto;margin:0 -22px;padding:0 22px;overscroll-behavior:contain}
+dialog h3{flex:none}
+dialog .dlg-actions{flex:none;margin-top:0;padding-top:12px;border-top:1px solid var(--line,rgba(120,120,140,.22))}
+.tabs{overflow:hidden}
+.tabscroll{display:flex;align-items:flex-end;gap:3px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;min-width:0;flex:0 1 auto;height:100%;position:relative;overscroll-behavior-x:contain}
+.tabscroll::-webkit-scrollbar{display:none}
+.tabs>.tab.home,.tabs>.tab.add,.tabs>.tab.split{flex:none}
+.tab.lifted{box-shadow:0 8px 20px rgba(20,25,60,.35);transform:translateY(-2px);z-index:3}
+.selactions{display:flex;align-items:center;gap:8px;padding:10px 4px 0}
+.selcount{flex:1;font-weight:650;color:var(--muted)}
+.pg.picked .pt{outline:3px solid var(--accent);outline-offset:1px}
+.pg .pick{position:absolute;top:6px;left:6px;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:rgba(20,22,40,.45);display:grid;place-items:center;color:#fff;z-index:2}
+.pg.picked .pick{background:var(--accent)}
+#sheetSel.on{background:var(--accent-soft);color:var(--accent)}
