@@ -1,5 +1,5 @@
 // Anota service worker: network-first so updates always arrive when online, cache fallback for offline use.
-const VERSION = 'anota-v12';
+const VERSION = 'anota-v13';
 const ASSETS = [
   './', 'index.html', 'styles.css', 'app.js', 'db.js', 'pdfout.js', 'docx.js', 'polyfills.js', 'manifest.webmanifest',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/favicon-64.png',

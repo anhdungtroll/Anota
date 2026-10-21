@@ -641,3 +641,4 @@ dialog .dlg-actions{flex:none;margin-top:0;padding-top:12px;border-top:1px solid
 #sheetSel.on{background:var(--accent-soft);color:var(--accent)}
 
 .selbar{width:max-content}
+.tabs>.tab.home{padding:0 12px;min-width:40px;justify-content:center}

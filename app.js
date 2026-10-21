@@ -178,7 +178,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.7 (build 1)';
+const APP_VERSION = '3.8 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -695,9 +695,13 @@ function resize() {
   const rw = st.clientWidth, rh = st.clientHeight;      // layout size: not shrunk by the opening animation's scale()
   if (!rw || !rh) return;
   const first = !vw;
-  vw = rw; vh = rh; dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const nd = Math.min(window.devicePixelRatio || 1, 3);
+  if (!first && rw === vw && rh === vh && nd === dpr) return;   // assigning canvas.width clears it: never do that for a no-op
+  vw = rw; vh = rh; dpr = nd;
   for (const c of [cv, base]) { c.width = Math.round(vw * dpr); c.height = Math.round(vh * dpr); }
   if (S.doc) { if (first && !S.restored) fitView(); clampView(); }
+  baseDirty = true;
+  if (S.doc && !first) { try { frame(); return; } catch (e) {} }   // repaint in the same task so the cleared canvas is never shown
   requestFrame(true);
 }
 function fitView() {
@@ -2895,7 +2899,7 @@ async function importPdf(file) {
 function renderTabs() {
   const el = $('#tabs'); el.innerHTML = '';
   document.body.classList.toggle('at-home', !S.tab);
-  el.append(h('button', { class: 'tab home' + (S.tab ? '' : ' on'), 'aria-label': 'Home', onclick: () => switchTo(null) }, icon('home', 20), h('span', { class: 'tlabel' }, 'Home')));
+  el.append(h('button', { class: 'tab home' + (S.tab ? '' : ' on'), 'aria-label': 'Home', onclick: () => switchTo(null) }, icon('home', 20)));
   const strip = h('div', { class: 'tabscroll' });      // only this part scrolls; Home, +, and Split stay put
   for (const t of S.tabs) {
     const on = S.tab === t;

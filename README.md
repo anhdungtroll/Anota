@@ -62,6 +62,10 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.8
+- Home tab is now just the house icon.
+- Fixed the one-frame black flash on PC: the canvas was being cleared by no-op resize events and painted blank before redraw. Resizes are now skipped when nothing changed and repaint immediately when they do.
+
 ## What's new in 3.7
 - Note graph: drag the dots around (they stay where you drop them), tap one to open it, Tidy up resets the layout.
 - Lists redesigned: nested bullets (filled, hollow, square), bold numbers, rounded to-do boxes that fill when ticked. Tab / Shift+Tab (or the indent buttons) nest items; Enter keeps the level, an empty item steps out. Insert has To-do, Bullets and Numbered.
