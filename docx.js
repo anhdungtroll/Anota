@@ -46,8 +46,104 @@ function fontFamily(name) {
   return 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
 }
 
-export async function docxToPdf(file, onProgress = () => {}) {
-  const zip = await readZip(await file.arrayBuffer());
+export async function wordToPdf(file, onProgress = () => {}) {
+  const buf = await file.arrayBuffer(), head = new Uint8Array(buf, 0, Math.min(8, buf.byteLength));
+  if (head[0] === 0x50 && head[1] === 0x4b) return convert(await readZip(buf), onProgress);                  // .docx (zip)
+  if (head[0] === 0xd0 && head[1] === 0xcf) return convert(fakeZip(readDocText(buf)), onProgress);         // .doc (OLE)
+  if (head[0] === 0x7b && head[1] === 0x5c) return convert(fakeZip(rtfToText(new TextDecoder('latin1').decode(buf))), onProgress);   // .rtf
+  throw new Error('unsupported');
+}
+export const docxToPdf = wordToPdf;
+
+/* ---------- legacy .doc: pull the text out of the OLE container ---------- */
+function readCfb(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), END = 0xfffffffa;
+  const ssz = 1 << dv.getUint16(30, true), mss = 1 << dv.getUint16(32, true);
+  const dirStart = dv.getUint32(48, true), miniCut = dv.getUint32(56, true), miniStart = dv.getUint32(60, true), difStart = dv.getUint32(68, true), nDif = dv.getUint32(72, true);
+  const at = (n) => (n + 1) * ssz, fatSecs = [];
+  for (let i = 0; i < 109; i++) { const v = dv.getUint32(76 + 4 * i, true); if (v < END) fatSecs.push(v); }
+  for (let d = difStart, g = 0; d < END && g <= nDif; g++) { const o = at(d); for (let i = 0; i < ssz / 4 - 1; i++) { const v = dv.getUint32(o + 4 * i, true); if (v < END) fatSecs.push(v); } d = dv.getUint32(o + ssz - 4, true); }
+  const fat = [];
+  for (const sn of fatSecs) for (let i = 0; i < ssz / 4; i++) fat.push(dv.getUint32(at(sn) + 4 * i, true));
+  const chain = (start, tbl) => { const out = []; for (let n = start, g = 0; n < END && g < 1e6; g++) { out.push(n); n = tbl[n]; } return out; };
+  const big = (start, size) => {
+    const secs = chain(start, fat), out = new Uint8Array(secs.length * ssz);
+    secs.forEach((sn, i) => out.set(u8.subarray(at(sn), at(sn) + ssz), i * ssz));
+    return size == null ? out : out.subarray(0, size);
+  };
+  const dir = big(dirStart), ent = [];
+  for (let o = 0; o + 128 <= dir.length; o += 128) {
+    const dd = new DataView(dir.buffer, dir.byteOffset + o, 128), nl = Math.max(0, dd.getUint16(64, true) - 2);
+    let name = ''; for (let i = 0; i < nl; i += 2) name += String.fromCharCode(dd.getUint16(i, true));
+    ent.push({ name, type: dir[o + 66], start: dd.getUint32(116, true), size: dd.getUint32(120, true) });
+  }
+  let mini = null, miniFat = null;
+  const getMini = (e) => {
+    if (!mini) { mini = big(ent[0].start, ent[0].size); const mf = big(miniStart); miniFat = new Uint32Array(mf.buffer, mf.byteOffset, mf.length >> 2); }
+    const secs = chain(e.start, miniFat), out = new Uint8Array(secs.length * mss);
+    secs.forEach((sn, i) => out.set(mini.subarray(sn * mss, sn * mss + mss), i * mss));
+    return out.subarray(0, e.size);
+  };
+  return (name) => { const e = ent.find((x) => x.name === name && x.type === 2); if (!e) return null; return e.size < miniCut ? getMini(e) : big(e.start, e.size); };
+}
+function readDocText(buf) {
+  const get = readCfb(buf), wd = get('WordDocument');
+  if (!wd) throw new Error('no WordDocument');
+  const dw = new DataView(wd.buffer, wd.byteOffset, wd.byteLength), flags = dw.getUint16(0x0a, true);
+  if (flags & 0x0100) throw new Error('encrypted');
+  const tbl = get(flags & 0x0200 ? '1Table' : '0Table'); if (!tbl) throw new Error('no table');
+  const dt = new DataView(tbl.buffer, tbl.byteOffset, tbl.byteLength);
+  const fcClx = dw.getUint32(0x01a2, true), lcbClx = dw.getUint32(0x01a6, true), ccp = dw.getInt32(0x004c, true);
+  let p = fcClx; const end = fcClx + lcbClx;
+  while (p < end && tbl[p] === 1) p += 3 + dt.getUint16(p + 1, true);
+  if (tbl[p] !== 2) throw new Error('no piece table');
+  const lcb = dt.getUint32(p + 1, true); p += 5;
+  const n = ((lcb - 4) / 12) | 0, cp = [], dec8 = new TextDecoder('windows-1252'), dec16 = new TextDecoder('utf-16le');
+  for (let i = 0; i <= n; i++) cp.push(dt.getUint32(p + 4 * i, true));
+  let text = '';
+  for (let i = 0; i < n; i++) {
+    const fc = dt.getUint32(p + 4 * (n + 1) + 8 * i + 2, true), len = cp[i + 1] - cp[i], comp = (fc & 0x40000000) !== 0, off = fc & 0x3fffffff;
+    text += comp ? dec8.decode(wd.subarray(off / 2, off / 2 + len)) : dec16.decode(wd.subarray(off, off + len * 2));
+    if (text.length >= ccp) break;
+  }
+  return text.slice(0, ccp)
+    .replace(/\x13[^\x14\x15]*\x14?/g, '').replace(/[\x15\x01\x08]/g, '')
+    .replace(/\x07\x07/g, '\r').replace(/\x07/g, '\t').replace(/\x0b/g, '\n').replace(/\x0c/g, '\r\f\r');
+}
+function rtfToText(src) {
+  let out = '', depth = 0, skip = -1;
+  const SKIP = new Set(['fonttbl', 'colortbl', 'stylesheet', 'info', 'pict', 'header', 'footer', 'footnote', 'object', 'themedata', 'datastore']);
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') { depth++; if (src[i + 1] === '\\' && src[i + 2] === '*') { skip = skip < 0 ? depth : skip; } }
+    else if (c === '}') { if (skip === depth) skip = -1; depth--; }
+    else if (c === '\\') {
+      const m = /^\\([a-zA-Z]+)(-?\d+)? ?/.exec(src.slice(i, i + 40));
+      if (m) {
+        i += m[0].length - 1;
+        if (SKIP.has(m[1]) && skip < 0) skip = depth;
+        if (skip >= 0) continue;
+        if (m[1] === 'par' || m[1] === 'line' || m[1] === 'row') out += '\r'; else if (m[1] === 'tab' || m[1] === 'cell') out += '\t'; else if (m[1] === 'page') out += '\r\f\r';
+        else if (m[1] === 'u' && m[2]) { out += String.fromCharCode(+m[2] < 0 ? +m[2] + 65536 : +m[2]); if (src[i + 1] === '?') i++; }
+      } else if (src[i + 1] === "'") { if (skip < 0) out += String.fromCharCode(parseInt(src.substr(i + 2, 2), 16)); i += 3; }
+      else { if (skip < 0 && /[\\{}]/.test(src[i + 1] || '')) out += src[i + 1]; i++; }
+    } else if (skip < 0 && c !== '\n' && c !== '\r') out += c;
+  }
+  return out;
+}
+const xmlEsc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+// wrap plain paragraphs in just enough Word XML for the same layout engine
+function fakeZip(text) {
+  const paras = text.split(/\r|\n/).map((line) => {
+    if (line === '\f') return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+    const runs = line.split('\t').map((seg) => `<w:r><w:t xml:space="preserve">${xmlEsc(seg)}</w:t></w:r>`).join('<w:r><w:tab/></w:r>');
+    return `<w:p><w:pPr><w:spacing w:after="100"/></w:pPr>${runs}</w:p>`;
+  }).join('');
+  const xml = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paras}</w:body></w:document>`;
+  return { has: () => false, get: async () => null, text: async (n) => (n === 'word/document.xml' ? xml : null) };
+}
+
+async function convert(zip, onProgress) {
   const docText = await zip.text('word/document.xml');
   if (!docText) throw new Error('no document');
   const doc = parseXml(docText), body = doc.getElementsByTagNameNS('*', 'body')[0];
@@ -63,7 +159,7 @@ export async function docxToPdf(file, onProgress = () => {}) {
     if (imgCache.has(rid)) return imgCache.get(rid);
     let bmp = null;
     try {
-      let t = rels.get(rid); if (t) { t = t.replace(/^\//, ''); const path = t.startsWith('word/') ? t : 'word/' + t; const bytes = await zip.get(path.replace('word/../', '')); if (bytes) bmp = await createImageBitmap(new Blob([bytes])); }
+      let t = rels.get(rid); if (t) { t = t.replace(/^\//, ''); const path = t.startsWith('word/') ? t : 'word/' + t; const bytes = await zip.get(path.replace('word/../', '')); if (bytes) { bmp = await createImageBitmap(new Blob([bytes])); if (bmp.width > 1600) { const k = 1600 / bmp.width, small = await createImageBitmap(bmp, { resizeWidth: 1600, resizeHeight: Math.max(1, Math.round(bmp.height * k)), resizeQuality: 'medium' }); bmp.close(); bmp = small; } } }
     } catch {}
     imgCache.set(rid, bmp); return bmp;
   }
@@ -145,12 +241,18 @@ export async function docxToPdf(file, onProgress = () => {}) {
   const mg = { l: tw2px(pgMar ? +attr(pgMar, 'left') || 1440 : 1440), r: tw2px(pgMar ? +attr(pgMar, 'right') || 1440 : 1440), t: tw2px(pgMar ? +attr(pgMar, 'top') || 1440 : 1440), b: tw2px(pgMar ? +attr(pgMar, 'bottom') || 1440 : 1440) };
   const SC = 1.6;                                   // render at higher density so it stays crisp when zoomed
 
-  const pages = [];
-  let cur = null;
+  const done = [];   // finished pages are turned into JPEG bytes straight away so memory stays flat on long documents
+  let cur = null, count = 0;
+  const finish = (pg) => done.push(new Promise((res) => {
+    const wpx = pg.cv.width, hpx = pg.cv.height;
+    pg.cv.toBlob(async (b) => { const jpeg = new Uint8Array(await b.arrayBuffer()); pg.cv.width = pg.cv.height = 0; res({ jpeg, wpx, hpx }); }, 'image/jpeg', 0.88);
+  }));
   const newPage = () => {
+    if (cur) finish(cur);
+    count++;
     const cv = document.createElement('canvas'); cv.width = Math.round(PW * SC); cv.height = Math.round(PHx * SC);
     const g = cv.getContext('2d'); g.scale(SC, SC); g.fillStyle = '#fff'; g.fillRect(0, 0, PW, PHx);
-    cur = { cv, g, y: mg.t }; pages.push(cur); return cur;
+    cur = { cv, g, y: mg.t }; return cur;
   };
   newPage();
   const bottom = () => PHx - mg.b;
@@ -328,13 +430,8 @@ export async function docxToPdf(file, onProgress = () => {}) {
       emit(m, pb);
     }
     if (++n % 25 === 0) { onProgress(n / blocks.length); await new Promise((r) => setTimeout(r)); }
-    if (pages.length > 400) break;
+    if (count > 600) break;
   }
-  // drop a trailing blank page
-  const out = [];
-  for (const pg of pages) {
-    const blob = await new Promise((res) => pg.cv.toBlob(res, 'image/jpeg', 0.9));
-    out.push({ jpeg: new Uint8Array(await blob.arrayBuffer()), wpx: pg.cv.width, hpx: pg.cv.height });
-  }
-  return buildPdf(out);
+  finish(cur);
+  return buildPdf(await Promise.all(done));
 }

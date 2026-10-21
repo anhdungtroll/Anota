@@ -62,6 +62,22 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.4
+- Selection: the rotate handle now sits beside the box (left when the box is near the right edge); the option bar can be dragged by its grip; Copy (editable, pastes into any note via Insert > Paste or Ctrl+V, and also lands on the system clipboard as a picture), Save image (PNG), Copy text, Duplicate.
+- Select tool: tap it again to choose what it can pick up (ink, highlighter, shapes, text, images, other).
+- Library: Trash (30 days, restores exactly as it was, nothing is copied so it costs no extra storage), tags, sorting (modified / created / name), pinning, duplicate, copy typed text.
+- Links: type `[[Note title]]` in a text box (or Insert > Note link); tap it to open or create the note. Menu > Tags and links shows backlinks; the Graph chip in the library draws your notes as a network.
+- Lists: bullets, numbered and to-do lists in text boxes (Enter continues the list); tap a checkbox to tick it.
+- Audio: Insert > Audio records a voice note into the page with inline play, pause and seek.
+
+## What's new in 3.3
+- Look: stray "null" removed; two new themes, **Midnight** and **Paper**.
+- Pen tip alignment: Settings > Pen tip alignment > Calibrate (9 taps), then nudge until the blue ring sits on the grey Android hover ring.
+- Large files: PDFs are loaded lazily, rendered at low resolution first, with a memory budget, so big files no longer crash.
+- Faster start (modulepreload, cache-first service worker) and faster PDF rendering.
+- Toolbar: choose which tools show and their order, size (Auto / Normal / Compact; Auto is compact on small screens), and an optional **Hold and drag** mode (hold the toolbar, drag it anywhere, drop it at a side to stand it up).
+- Import `.doc` and `.rtf` (text only; `.docx` keeps formatting).
+
 ## What's new in 3.2
 
 - Icon zoomed in (no black borders on the tablet home screen).

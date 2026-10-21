@@ -12,6 +12,8 @@
 <link rel="icon" href="icons/favicon-64.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="styles.css">
+<link rel="modulepreload" href="app.js">
+<link rel="modulepreload" href="db.js">
 </head>
 <body class="at-home">
 <div id="wrap">
@@ -76,7 +78,7 @@
 </div><!-- /main -->
 </div><!-- /wrap -->
 <dialog id="dlg"></dialog>
-<input type="file" id="file" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+<input type="file" id="file" accept="application/pdf,.pdf,.doc,.docx,.rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
 <input type="file" id="imgfile" accept="image/*" hidden>
 <input type="file" id="camfile" accept="image/*" capture="environment" hidden>
 
