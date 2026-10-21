@@ -600,3 +600,25 @@ html[data-style=clay] .toast{border-radius:20px}
 .graphcv{display:block;margin:6px auto;border-radius:14px;background:var(--panel2,rgba(120,120,140,.08))}
 .dock .tool.filtered::after{content:"";position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
 .dock .tool{position:relative}
+
+/* v3.5 select panel, custom size slot */
+.pop.lfpop{width:min(340px,calc(100vw - 24px))}
+.lfhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+.lfhead h4{margin:0}
+.lfsum{font-size:12.5px;color:var(--muted,#7a8099);text-align:right}
+.lfgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.lftile{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 6px 10px;border-radius:16px;background:var(--panel2,rgba(120,120,140,.1));border:2px solid transparent;color:inherit;opacity:.62;transition:opacity .12s,background .12s,border-color .12s,transform .1s}
+.lftile:active{transform:scale(.96)}
+.lftile.on{opacity:1;background:var(--accent-soft);border-color:var(--accent)}
+.lfic{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:var(--panel,#fff)}
+.lftile.on .lfic{color:var(--accent)}
+.lfl{font-size:12.5px;font-weight:650;text-align:center;line-height:1.15}
+.lfck{position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;color:#fff}
+.lftile.on .lfck{background:var(--accent)}
+.lfq{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
+.qdots .qsep{width:1px;align-self:stretch;background:var(--line,rgba(120,120,140,.3));margin:4px 2px}
+.qd.slot{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;border:2px dashed var(--accent)}
+.qd.slot b{font-size:18px;line-height:1;color:var(--accent)}
+.qd.slot small{font-size:10px;font-weight:700;opacity:.7}
+.qd.slot.on{border-style:solid}
+.qsave{width:100%;margin-top:8px}

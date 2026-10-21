@@ -176,7 +176,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.4 (build 1)';
+const APP_VERSION = '3.5 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -675,10 +675,11 @@ function drawPage(c, pg, o) {
    Render loop
    ===================================================================== */
 function resize() {
-  const r = $('#stage').getBoundingClientRect();
-  if (!r.width || !r.height) return;
+  const st = $('#stage');
+  const rw = st.clientWidth, rh = st.clientHeight;      // layout size: not shrunk by the opening animation's scale()
+  if (!rw || !rh) return;
   const first = !vw;
-  vw = r.width; vh = r.height; dpr = Math.min(window.devicePixelRatio || 1, 3);
+  vw = rw; vh = rh; dpr = Math.min(window.devicePixelRatio || 1, 3);
   for (const c of [cv, base]) { c.width = Math.round(vw * dpr); c.height = Math.round(vh * dpr); }
   if (S.doc) { if (first && !S.restored) fitView(); clampView(); }
   requestFrame(true);
@@ -1445,7 +1446,7 @@ function pointInPoly(px, py, poly) {
   }
   return inside;
 }
-const LASSO_KINDS = [['ink', 'Pen ink'], ['hl', 'Highlighter'], ['shape', 'Shapes'], ['text', 'Text'], ['img', 'Images'], ['other', 'Links, audio, notes']];
+const LASSO_KINDS = [['ink', 'Pen ink', 'ball'], ['hl', 'Highlighter', 'hl'], ['shape', 'Shapes', 'shape'], ['text', 'Text', 'text'], ['img', 'Images', 'image'], ['other', 'Links & audio', 'link']];
 const kindOf = (o) => (o.p ? (o.t === 'hl' ? 'hl' : o.sh ? 'shape' : 'ink') : o.k === 'text' ? 'text' : o.k === 'img' ? 'img' : 'other');
 function lassoSelect(poly) {
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -1614,7 +1615,12 @@ function clientOf(e) {
   if (e.pointerType !== 'pen' || e.pointerId >= 1000) return [e.clientX, e.clientY];
   const c = S.penCal; return [c.ax * e.clientX + c.bx, c.ay * e.clientY + c.by];
 }
-function local(e) { const r = cv.getBoundingClientRect(), [x, y] = clientOf(e); return [x - r.left, y - r.top]; }
+// pointer position in canvas units. Divides by the canvas's on-screen size so the ink lands under the tip even if the
+// element is scaled (opening animation) or its bitmap was sized a moment too early.
+function local(e) {
+  const r = cv.getBoundingClientRect(), [x, y] = clientOf(e);
+  return [(x - r.left) * (r.width ? vw / r.width : 1), (y - r.top) * (r.height ? vh / r.height : 1)];
+}
 
 cv.addEventListener('contextmenu', (e) => {
   e.preventDefault();
@@ -3266,16 +3272,25 @@ function drawPreview(cvs, kind, T) {
   drawStroke(g, st, dark);
 }
 function openPop(kind) {
-  const pop = $('#pop'); pop.innerHTML = ''; popOpen = true; pop.hidden = false;
+  const pop = $('#pop'); pop.innerHTML = ''; popOpen = true; pop.hidden = false; pop.classList.remove('lfpop');
   const k = kind || S.tool;
   pop.dataset.kind = k;
   if (k === 'lasso') {
+    pop.classList.add('lfpop');
+    const ids = LASSO_KINDS.map((x) => x[0]);
     const save = () => { prefs.set('lassoOff', [...S.lassoOff]); syncDock(); openPop('lasso'); };
-    pop.append(h('h4', {}, 'Select only…'),
-      h('div', { class: 'tagwrap' }, LASSO_KINDS.map(([id, l]) => h('button', { class: 'chip' + (S.lassoOff.has(id) ? '' : ' on'), type: 'button', onclick: () => { S.lassoOff.has(id) ? S.lassoOff.delete(id) : S.lassoOff.add(id); save(); } }, l))),
-      h('div', { class: 'segs' }, h('button', { class: 'seg', type: 'button', onclick: () => { S.lassoOff.clear(); save(); } }, 'Everything'),
-        ...LASSO_KINDS.slice(0, 5).map(([id, l]) => h('button', { class: 'seg', type: 'button', onclick: () => { S.lassoOff = new Set(LASSO_KINDS.map((x) => x[0]).filter((x) => x !== id)); save(); } }, 'Only ' + l.split(' ').pop().toLowerCase()))),
-      h('p', { class: 'note' }, 'Circle around things: only the highlighted kinds are picked up. Handy for grabbing just the text, or just the ink.'));
+    const onNow = ids.filter((i) => !S.lassoOff.has(i));
+    const only = (list) => { S.lassoOff = new Set(ids.filter((i) => !list.includes(i))); save(); };
+    pop.append(
+      h('div', { class: 'lfhead' }, h('h4', {}, 'Select'), h('span', { class: 'lfsum' }, onNow.length === ids.length ? 'Picking up everything' : onNow.length ? 'Only ' + onNow.map((i) => LASSO_KINDS.find((x) => x[0] === i)[1].toLowerCase()).join(', ') : 'Nothing is selectable')),
+      h('div', { class: 'lfgrid' }, LASSO_KINDS.map(([id, l, ic]) => h('button', { type: 'button', class: 'lftile' + (S.lassoOff.has(id) ? '' : ' on'), 'aria-pressed': String(!S.lassoOff.has(id)), onclick: () => { S.lassoOff.has(id) ? S.lassoOff.delete(id) : S.lassoOff.add(id); save(); } },
+        h('span', { class: 'lfic' }, icon(ic, 22)), h('span', { class: 'lfl' }, l), h('span', { class: 'lfck' }, S.lassoOff.has(id) ? '' : icon('check', 14, 3))))),
+      h('div', { class: 'lfq' }, h('span', { class: 'rl' }, 'Quick'),
+        h('button', { type: 'button', class: 'chip' + (onNow.length === ids.length ? ' on' : ''), onclick: () => { S.lassoOff.clear(); save(); } }, 'All'),
+        h('button', { type: 'button', class: 'chip', onclick: () => only(['ink', 'hl', 'shape']) }, 'Ink'),
+        h('button', { type: 'button', class: 'chip', onclick: () => only(['text']) }, 'Text'),
+        h('button', { type: 'button', class: 'chip', onclick: () => only(['img']) }, 'Images')),
+      h('p', { class: 'note' }, 'Circle around things. Only the lit kinds are picked up. This panel stays open while you choose; tap the page to close it.'));
     return;
   }
   if (k === 'laser') {
@@ -3631,9 +3646,15 @@ function openQuick() {
   const presets = [0, 0.14, 0.32, 0.58, 1].map((f) => +(Math.round((mn + (mx - mn) * f) / st) * st).toFixed(1));
   const px = (v) => 4 + ((v - mn) / (mx - mn)) * 28;
   const val = h('span', { class: 'sizeval' }, String(T.s));
+  const qk = k === 'pen' ? S.penType : k, slots = prefs.get('qslot', {}), mine = slots[qk];
+  const dotStyle = (v) => `width:${px(clamp(v, mn, mx))}px;height:${px(clamp(v, mn, mx))}px;background:${k === 'eraser' ? '#e03131' : T.c || 'currentColor'}`;
+  const slotBtn = h('button', { type: 'button', class: 'qd slot' + (mine != null && Math.abs(T.s - mine) <= st * 0.51 ? ' on' : ''), 'aria-label': mine != null ? 'Your custom size ' + mine : 'Custom size, empty', onclick: () => { if (mine == null) return saveSlot(); T.s = mine; savePrefs(); syncDock(); closePop(); } },
+    mine != null ? h('i', { style: dotStyle(mine) }) : h('b', {}, '+'), h('small', {}, mine != null ? String(mine) : '★'));
+  const saveSlot = () => { slots[qk] = T.s; prefs.set('qslot', slots); toast('Saved as your custom size ' + T.s, 1500); openQuick(); };
   pop.append(h('h4', {}, 'Brush size'),
-    h('div', { class: 'qdots' }, presets.map((v) => h('button', { class: 'qd' + (Math.abs(T.s - v) <= st * 0.51 ? ' on' : ''), 'aria-label': 'Size ' + v, onclick: () => { T.s = v; savePrefs(); syncDock(); openQuick(); } },
-      h('i', { style: `width:${px(v)}px;height:${px(v)}px;background:${k === 'eraser' ? '#e03131' : T.c || 'currentColor'}` })))),
+    h('div', { class: 'qdots' }, presets.map((v) => h('button', { class: 'qd' + (Math.abs(T.s - v) <= st * 0.51 ? ' on' : ''), 'aria-label': 'Size ' + v, onclick: () => { T.s = v; savePrefs(); syncDock(); closePop(); } },
+      h('i', { style: `width:${px(v)}px;height:${px(v)}px;background:${k === 'eraser' ? '#e03131' : T.c || 'currentColor'}` }))), h('i', { class: 'qsep' }), slotBtn),
+    h('button', { type: 'button', class: 'seg qsave', onclick: saveSlot }, mine != null ? '★ Set custom to ' + T.s : '★ Save size ' + T.s + ' as custom'),
     h('div', { class: 'sizerow' },
       h('input', { type: 'range', min: mn, max: mx, step: st, value: T.s, 'aria-label': 'Size', oninput: (e) => { T.s = +e.target.value; savePrefs(); syncDock(); val.textContent = T.s; } }), val));
   pop.classList.add('qpop');
@@ -4030,9 +4051,11 @@ function wire() {
   document.addEventListener('visibilitychange', () => { if (document.hidden && S.doc) saveNow(); });
   window.addEventListener('pagehide', () => { if (S.doc) saveNow(); });
   new ResizeObserver(() => { if (S.doc) resize(); }).observe($('#stage'));
+  $('#editor').addEventListener('animationend', () => { if (S.doc) resize(); });
   window.addEventListener('click', (e) => {
-    if (popOpen && !e.target.closest('#pop,#dock,#selbar')) closePop();
-    if (menuOpen && !e.target.closest('#menu,#btnMore')) closeMenu();
+    const path = e.composedPath ? e.composedPath() : [], inside = (sel) => path.some((n) => n.matches && n.matches(sel)) || (e.target.closest && e.target.closest(sel));
+    if (popOpen && !inside('#pop,#dock,#selbar')) closePop();      // composedPath: a button that re-rendered its own panel is no longer "inside" afterwards
+    if (menuOpen && !inside('#menu,#btnMore')) closeMenu();
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => requestFrame(true));
 }

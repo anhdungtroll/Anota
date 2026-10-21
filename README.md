@@ -62,6 +62,11 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.5
+- Pen tip alignment: fixed the drawing surface being sized while the editor's opening animation was still shrinking it (about 1.5%), which made the ring and ink drift off the tip, more so towards the right. Pointer positions are now also mapped by the canvas's real on-screen size.
+- Select tool panel redesigned (icon tiles, quick presets) and it stays open while you choose. Panels that rebuild themselves no longer close by accident.
+- Brush size: a custom slot (star) next to the quick sizes, one per pen, saved with "Save size as custom".
+
 ## What's new in 3.4
 - Selection: the rotate handle now sits beside the box (left when the box is near the right edge); the option bar can be dragged by its grip; Copy (editable, pastes into any note via Insert > Paste or Ctrl+V, and also lands on the system clipboard as a picture), Save image (PNG), Copy text, Duplicate.
 - Select tool: tap it again to choose what it can pick up (ink, highlighter, shapes, text, images, other).
