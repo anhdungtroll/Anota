@@ -103,6 +103,8 @@ const IC = {
   restore: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
   grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  olist: 'M10 6h11M10 12h11M10 18h11M4 5l1-.8V9M3.5 14h2.4l-2.4 3h2.6',
+  todo: 'M3 4h6v6H3zM4.5 7l1.5 1.5L8 5.8M12 7h9M3 14h6v6H3zM12 17h9',
   sparkle: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
 };
 function icon(name, size = 24, sw = 1.9) {
@@ -176,7 +178,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.6 (build 1)';
+const APP_VERSION = '3.7 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -323,7 +325,8 @@ const imgCache = new Map();   // ref -> ImageBitmap | 'loading' | 'error'
    **bold**, __underline__ and ~~strike~~ work inside a line. The editor has buttons for all of it. */
 const HSZ = [1, 1.8, 1.5, 1.25];
 function parseLine(raw) {
-  let lvl = 0, bullet = false, check = null, num = null, t = raw, m;
+  let lvl = 0, bullet = false, check = null, num = null, depth = 0, t = raw, m;
+  if ((m = /^((?: {2}|\t)+)(?=(?:[-*\u2022]|\d{1,3}[.)]|\[[ xX]\])\s)/.exec(raw))) { depth = Math.min(4, m[1].replace(/\t/g, '  ').length / 2); t = raw.slice(m[1].length); }
   if ((m = /^(#{1,3})\s+/.exec(t))) { lvl = m[1].length; t = t.slice(m[0].length); }
   else if ((m = /^\[( |x|X)\]\s+/.exec(t))) { check = m[1] === ' ' ? 0 : 1; t = t.slice(m[0].length); }
   else if ((m = /^(\d{1,3})[.)]\s+/.exec(t))) { num = +m[1]; t = t.slice(m[0].length); }
@@ -342,7 +345,7 @@ function parseLine(raw) {
     else { buf += t[i]; i++; }
   }
   flush();
-  return { lvl, bullet, check, num, toks };
+  return { lvl, bullet, check, num, depth, toks };
 }
 const fontFor = (size, bold) => `${bold ? '700 ' : ''}${size}px ${FONT}`;
 function textLayout(it) {
@@ -352,7 +355,7 @@ function textLayout(it) {
   bctx.save();
   const rows = []; let y = 0;
   (it.text || '').split('\n').forEach((raw, li) => {
-    const P = parseLine(raw), size = it.s * HSZ[P.lvl], lh = size * 1.3, ind = P.bullet ? size * 0.95 : P.check != null ? size * 1.35 : P.num != null ? size * 1.6 : 0;
+    const P = parseLine(raw), size = it.s * HSZ[P.lvl], lh = size * 1.3, dep = P.depth * size * 1.3, ind = dep + (P.bullet ? size * 0.95 : P.check != null ? size * 1.45 : P.num != null ? size * 1.75 : 0);
     const maxW = Math.max(30, it.w - 2 * TP - ind), headBold = P.lvl > 0;
     const lines = []; let row = null;
     const newRow = () => (row = { parts: [], x: 0 }, lines.push(row), row);
@@ -375,7 +378,7 @@ function textLayout(it) {
     };
     for (const tk of P.toks) for (const piece of tk.t.split(/(\s+)/)) if (piece) place(piece, tk);
     if (P.lvl && y > 0) y += size * 0.22;
-    lines.forEach((r, i) => { rows.push({ y, lh, size, parts: r.parts, bullet: P.bullet && i === 0, chk: i === 0 ? P.check : null, num: i === 0 ? P.num : null, done: P.check === 1, li, ind, lvl: P.lvl }); y += lh; });
+    lines.forEach((r, i) => { rows.push({ y, lh, size, parts: r.parts, bullet: P.bullet && i === 0, chk: i === 0 ? P.check : null, num: i === 0 ? P.num : null, depth: P.depth, dep, done: P.check === 1, li, ind, lvl: P.lvl }); y += lh; });
   });
   bctx.restore();
   c = { sig, rows, h: Math.max(y, it.s * 1.3) + 2 * TP };
@@ -422,17 +425,28 @@ function drawItem0(c, it, o) {
     c.save(); c.fillStyle = it.c; c.textBaseline = 'top';
     for (const r of l.rows) {
       const y0 = it.y + TP + r.y + (r.lh - r.size) / 2, x0 = it.x + TP + r.ind, lw = Math.max(1, r.size / 15);
-      if (r.bullet) { c.beginPath(); c.arc(it.x + TP + r.size * 0.3, y0 + r.size * 0.56, r.size * 0.11, 0, 6.2832); c.fill(); }
-      if (r.chk != null) {
-        const bs = r.size * 0.78, bx = it.x + TP + r.size * 0.04, by = y0 + r.size * 0.1;
-        c.save(); c.lineWidth = Math.max(1.6, r.size / 13); c.strokeStyle = it.c; c.lineJoin = 'round'; c.lineCap = 'round';
-        roundRect(c, bx, by, bs, bs, bs * 0.22);
-        if (r.chk) { c.globalAlpha = 0.18; c.fill(); c.globalAlpha = 1; }
-        c.stroke();
-        if (r.chk) { c.beginPath(); c.moveTo(bx + bs * 0.22, by + bs * 0.54); c.lineTo(bx + bs * 0.43, by + bs * 0.74); c.lineTo(bx + bs * 0.8, by + bs * 0.26); c.stroke(); }
+      const acc = dark ? '#8aa4ff' : '#3b5bdb';
+      if (r.bullet) {
+        const bx = it.x + TP + r.dep + r.size * 0.32, by = y0 + r.size * 0.56, br = r.size * 0.12, kind = r.depth % 3;
+        c.save(); c.fillStyle = it.c; c.strokeStyle = it.c; c.lineWidth = Math.max(1.4, r.size / 15);
+        c.beginPath();
+        if (kind === 2) { c.rect(bx - br * 0.85, by - br * 0.85, br * 1.7, br * 1.7); c.fill(); }
+        else if (kind === 1) { c.arc(bx, by, br * 0.9, 0, 6.2832); c.stroke(); }
+        else { c.arc(bx, by, br * 1.15, 0, 6.2832); c.fill(); }
         c.restore();
       }
-      if (r.num != null) { c.font = fontFor(r.size, false); c.fillText(r.num + '.', it.x + TP, y0); }
+      if (r.chk != null) {
+        const bs = r.size * 0.8, bx = it.x + TP + r.dep + r.size * 0.04, by = y0 + r.size * 0.08;
+        c.save(); c.lineWidth = Math.max(1.7, r.size / 12); c.lineJoin = 'round'; c.lineCap = 'round';
+        roundRect(c, bx, by, bs, bs, bs * 0.3);
+        if (r.chk) { c.fillStyle = acc; c.fill(); c.strokeStyle = '#fff'; c.beginPath(); c.moveTo(bx + bs * 0.24, by + bs * 0.53); c.lineTo(bx + bs * 0.43, by + bs * 0.72); c.lineTo(bx + bs * 0.78, by + bs * 0.28); c.stroke(); }
+        else { c.fillStyle = dark ? 'rgba(138,164,255,.12)' : 'rgba(59,91,219,.07)'; c.fill(); c.strokeStyle = acc; c.stroke(); }
+        c.restore();
+      }
+      if (r.num != null) {
+        c.save(); c.font = fontFor(r.size * 0.92, true); c.fillStyle = acc; c.textAlign = 'right';
+        c.fillText(r.num + '.', it.x + TP + r.dep + r.size * 1.45, y0 + r.size * 0.04); c.restore();
+      }
       if (r.done) c.globalAlpha = 0.5;
       for (const p of r.parts) {
         c.font = fontFor(r.size, p.b);
@@ -1202,7 +1216,7 @@ function rotateSel(d) {
 function resizable() { return !!(S.sel && S.sel.items.length); }
 function placeSelbar() {
   const sl = S.sel, bar = $('#selbar'), { s, x, y } = S.view;
-  bar.hidden = !!S.act;
+  bar.style.visibility = S.act ? 'hidden' : '';       // not [hidden]: that would replay the pop-in animation after every drag
   const cx = ((sl.b[0] + sl.b[2]) / 2 + sl.dx) * s + x;
   const half = (bar.offsetWidth || 240) / 2 + 8;
   const off = S.barOff || (S.barOff = { x: 0, y: 0 });
@@ -1524,6 +1538,7 @@ function openTextEditor(it, pg, pi, isNew) {
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') commitEditor();
     else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) listEnter(e, el);
+    else if (e.key === 'Tab') { e.preventDefault(); editLines(indentLine(e.shiftKey ? -1 : 1)); }
   });
   el.addEventListener('blur', () => setTimeout(() => { if (editor && editor.el === el) commitEditor(); }, 150));
   requestFrame(true);
@@ -1533,12 +1548,14 @@ function openTextEditor(it, pg, pi, isNew) {
 function listEnter(e, el) {
   const v = el.value, a = el.selectionStart; if (a !== el.selectionEnd) return;
   const ls = v.lastIndexOf('\n', a - 1) + 1, line = v.slice(ls, a);
-  const m = /^([-*\u2022]\s+|\[[ xX]\]\s+|(\d{1,3})([.)])\s+)/.exec(line);
+  const m = /^((?: {2}|\t)*)([-*\u2022]\s+|\[[ xX]\]\s+|(\d{1,3})([.)])\s+)/.exec(line);
   if (!m) return;
   e.preventDefault();
-  if (line.length === m[0].length) { el.value = v.slice(0, ls) + v.slice(a); el.setSelectionRange(ls, ls); }
-  else {
-    const next = m[2] ? (+m[2] + 1) + m[3] + ' ' : /^\[/.test(m[1]) ? '[ ] ' : m[1], ins = '\n' + next;
+  if (line.length === m[0].length) {                                   // empty item: step out one level, or end the list
+    const out = m[1].length >= 2 ? m[1].slice(2) : '';
+    el.value = v.slice(0, ls) + (m[1].length >= 2 ? out + m[2] : '') + v.slice(a); const p = ls + (m[1].length >= 2 ? out.length + m[2].length : 0); el.setSelectionRange(p, p);
+  } else {
+    const next = m[1] + (m[3] ? (+m[3] + 1) + m[4] + ' ' : /^\[/.test(m[2]) ? '[ ] ' : m[2]), ins = '\n' + next;
     el.value = v.slice(0, a) + ins + v.slice(el.selectionEnd); el.setSelectionRange(a + ins.length, a + ins.length);
   }
   el.dispatchEvent(new Event('input'));
@@ -3349,7 +3366,9 @@ function openPop(kind) {
       insBtn('bookmark', 'Elements', () => { closePop(); elementsDialog(); }),
       insBtn('copy', 'Paste', () => { closePop(); pasteClip(); }),
       insBtn('mic', 'Audio', () => { closePop(); audioDialog(); }),
-      insBtn('list', 'To-do list', () => { closePop(); newList('[ ] '); }),
+      insBtn('todo', 'To-do list', () => { closePop(); newList('[ ] '); }),
+      insBtn('list', 'Bullets', () => { closePop(); newList('- '); }),
+      insBtn('olist', 'Numbered', () => { closePop(); newList('1. '); }),
       insBtn('link', 'Note link', () => { closePop(); noteLinkDialog(); }),
       insBtn('plus', 'Page', () => { closePop(); if (isInf(S.doc)) return toast('Whiteboards are one endless page'); const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); })));
     return;
@@ -3701,12 +3720,19 @@ function editLines(fn) {
   el.setSelectionRange(ls + block.length, ls + block.length);
   el.dispatchEvent(new Event('input')); el.focus();
 }
+const LIST_RX = /^((?: {2}|\t)*)([-*\u2022]|\d{1,3}[.)]|\[[ xX]\])\s/;
+const indentLine = (d) => (line) => {
+  const m = LIST_RX.exec(line); if (!m) return line;
+  if (d > 0) return m[1].length >= 8 ? line : '  ' + line;
+  return m[1].length ? line.replace(/^(?: {2}|\t)/, '') : line;
+};
 const lineMark = (n) => (line, i) => {
+  const lead = (/^((?: {2}|\t)*)(?=[-*\u2022]\s|\d{1,3}[.)]\s|\[[ xX]\]\s)/.exec(line) || [''])[0]; if (lead) line = line.slice(lead.length);
   const m = /^(#{1,3}\s+|[-*•]\s+|\[[ xX]\]\s+|\d{1,3}[.)]\s+)/.exec(line), cur = m ? m[1].trim() : '', body = m ? line.slice(m[0].length) : line;
   const curKind = !m ? '' : /^#/.test(cur) ? cur : /^\[/.test(cur) ? 'c' : /^\d/.test(cur) ? 'n' : '-';
   const want = n === 0 ? '' : n > 0 ? '#'.repeat(n) : n === -1 ? '-' : n === -2 ? 'c' : 'n';
   if (curKind === want) return body;
-  return (want === '' ? '' : want === 'c' ? '[ ] ' : want === 'n' ? (i + 1) + '. ' : want + ' ') + body;
+  return (want === '-' || want === 'c' || want === 'n' ? lead : '') + (want === '' ? '' : want === 'c' ? '[ ] ' : want === 'n' ? (i + 1) + '. ' : want + ' ') + body;
 };
 function wrapSel(mark) {
   if (!editor) return;
@@ -3725,7 +3751,7 @@ function buildTextBar() {
   const mk = (label, title, fn, cls) => { const b = h('button', { type: 'button', class: cls || '', title, 'aria-label': title }, label); b.addEventListener('pointerdown', (e) => { e.preventDefault(); }); b.addEventListener('click', (e) => { e.preventDefault(); fn(); }); return b; };
   return h('div', { class: 'txtbar', onpointerdown: (e) => e.preventDefault() },
     mk('H1', 'Big heading', () => editLines(lineMark(1)), 'tb-h'), mk('H2', 'Heading', () => editLines(lineMark(2)), 'tb-h'), mk('H3', 'Small heading', () => editLines(lineMark(3)), 'tb-h'),
-    mk('•', 'Bullet list', () => editLines(lineMark(-1))), mk('1.', 'Numbered list', () => editLines(lineMark(-3))), mk('☐', 'To-do list', () => editLines(lineMark(-2))), h('i', { class: 'tsep' }),
+    mk('•', 'Bullet list', () => editLines(lineMark(-1))), mk('1.', 'Numbered list', () => editLines(lineMark(-3))), mk('☐', 'To-do list', () => editLines(lineMark(-2))), mk('⇥', 'Indent (Tab)', () => editLines(indentLine(1))), mk('⇤', 'Outdent (Shift+Tab)', () => editLines(indentLine(-1))), h('i', { class: 'tsep' }),
     mk('B', 'Bold', () => wrapSel('**'), 'tb-b'), mk('U', 'Underline', () => wrapSel('__'), 'tb-u'), mk('S', 'Strikethrough', () => wrapSel('~~'), 'tb-s'),
     h('i', { class: 'tsep' }), mk('Aa−', 'Smaller', () => editorScale(1 / 1.15)), mk('Aa+', 'Bigger', () => editorScale(1.15)),
     mk('✓', 'Done', () => commitEditor(), 'tb-done'));
@@ -3807,34 +3833,76 @@ function graphDialog() {
   const edges = []; docs.forEach((m) => (m.links || []).forEach((t) => { const o = idx.get(t.toLowerCase()); if (o && o !== m) edges.push([m, o]); }));
   const nodes = [...new Set(edges.flat())].slice(0, 90);
   const body = [];
-  if (!nodes.length) body.push(h('p', { class: 'note' }, 'No connections yet. Type [[Note title]] inside a text box (or use Insert > Note link) and your notes will appear here as a network.'));
-  else {
-    const W = 320, H = 340, cv2 = h('canvas', { class: 'graphcv', width: W * 2, height: H * 2, style: `width:100%;max-width:${W}px;aspect-ratio:${W}/${H}` });
-    nodes.forEach((n, i) => { const a = i / nodes.length * 6.283; n.gx = W / 2 + Math.cos(a) * 110; n.gy = H / 2 + Math.sin(a) * 110; n.vx = n.vy = 0; n.deg = 0; });
-    edges.forEach(([a, b]) => { a.deg++; b.deg++; });
-    for (let it = 0; it < 260; it++) {
-      for (const a of nodes) for (const b of nodes) if (a !== b) { const dx = a.gx - b.gx, dy = a.gy - b.gy, d2 = dx * dx + dy * dy + 30; const f = 1400 / d2; a.vx += dx * f / Math.sqrt(d2); a.vy += dy * f / Math.sqrt(d2); }
-      for (const [a, b] of edges) { const dx = b.gx - a.gx, dy = b.gy - a.gy, d = Math.hypot(dx, dy) || 1, f = (d - 70) * 0.02; a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f; }
-      for (const n of nodes) { n.vx += (W / 2 - n.gx) * 0.004; n.vy += (H / 2 - n.gy) * 0.004; n.gx += n.vx; n.gy += n.vy; n.vx *= 0.8; n.vy *= 0.8; n.gx = clamp(n.gx, 30, W - 30); n.gy = clamp(n.gy, 22, H - 22); }
+  if (!nodes.length) { body.push(h('p', { class: 'note' }, 'No connections yet. Type [[Note title]] inside a text box (or use Insert > Note link) and your notes will appear here as a network you can drag around.')); modal({ title: 'Note graph', body, actions: [{ label: 'Close' }] }); return; }
+  const W = 340, H = 400, saved = prefs.get('graphPos', {});
+  const cv2 = h('canvas', { class: 'graphcv', width: W * 2, height: H * 2, style: `width:100%;max-width:${W}px;aspect-ratio:${W}/${H};touch-action:none` });
+  nodes.forEach((n, i) => { const a = i / nodes.length * 6.283, p = saved[n.id]; n.gx = p ? p[0] * W : W / 2 + Math.cos(a) * 110; n.gy = p ? p[1] * H : H / 2 + Math.sin(a) * 120; n.vx = n.vy = 0; n.deg = 0; n.fixed = !!p; });
+  edges.forEach(([a, b]) => { a.deg++; b.deg++; });
+  const radius = (n) => 6 + Math.min(7, n.deg * 1.5);
+  let energy = 1, drag = null, raf = 0;
+  const step = () => {
+    for (const a of nodes) for (const b of nodes) if (a !== b) { const dx = a.gx - b.gx, dy = a.gy - b.gy, d2 = dx * dx + dy * dy + 40, d = Math.sqrt(d2), f = 1700 / d2; a.vx += dx / d * f; a.vy += dy / d * f; }
+    for (const [a, b] of edges) { const dx = b.gx - a.gx, dy = b.gy - a.gy, d = Math.hypot(dx, dy) || 1, f = (d - 78) * 0.035; a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f; }
+    let e = 0;
+    for (const n of nodes) {
+      if (drag && drag.n === n) { n.vx = n.vy = 0; continue; }
+      if (n.fixed) { n.vx = n.vy = 0; continue; }
+      n.vx += (W / 2 - n.gx) * 0.004; n.vy += (H / 2 - n.gy) * 0.004;
+      n.gx = clamp(n.gx + n.vx, 26, W - 26); n.gy = clamp(n.gy + n.vy, 22, H - 30); n.vx *= 0.82; n.vy *= 0.82; e += Math.abs(n.vx) + Math.abs(n.vy);
     }
-    const g = cv2.getContext('2d'), cs = getComputedStyle(document.documentElement);
-    const ink = cs.getPropertyValue('--ink').trim() || '#222', acc = cs.getPropertyValue('--accent').trim() || '#3b5bdb';
-    g.scale(2, 2); g.lineWidth = 1.4; g.strokeStyle = acc; g.globalAlpha = 0.45;
-    for (const [a, b] of edges) { if (!nodes.includes(a) || !nodes.includes(b)) continue; g.beginPath(); g.moveTo(a.gx, a.gy); g.lineTo(b.gx, b.gy); g.stroke(); }
+    return e;
+  };
+  const g = cv2.getContext('2d');
+  const draw = () => {
+    const cs = getComputedStyle(document.documentElement), ink = cs.getPropertyValue('--ink').trim() || '#222', acc = cs.getPropertyValue('--accent').trim() || '#3b5bdb';
+    g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, W, H);
+    const hot = drag ? new Set([drag.n, ...edges.filter((e) => e.includes(drag.n)).flat()]) : null;
+    g.lineWidth = 1.6; g.strokeStyle = acc;
+    for (const [a, b] of edges) { g.globalAlpha = hot ? (hot.has(a) && hot.has(b) && (a === drag.n || b === drag.n) ? 0.9 : 0.15) : 0.45; g.beginPath(); g.moveTo(a.gx, a.gy); g.lineTo(b.gx, b.gy); g.stroke(); }
     g.globalAlpha = 1; g.font = '600 11px sans-serif'; g.textAlign = 'center';
     for (const n of nodes) {
-      g.fillStyle = acc; g.beginPath(); g.arc(n.gx, n.gy, 5 + Math.min(6, n.deg * 1.4), 0, 6.2832); g.fill();
-      g.fillStyle = ink; const t = n.title.length > 16 ? n.title.slice(0, 15) + '…' : n.title; g.fillText(t, n.gx, n.gy + 19);
+      const r = radius(n) + (drag && drag.n === n ? 3 : 0);
+      g.globalAlpha = hot && !hot.has(n) ? 0.35 : 1;
+      g.fillStyle = acc; g.beginPath(); g.arc(n.gx, n.gy, r, 0, 6.2832); g.fill();
+      if (n.fixed) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.arc(n.gx, n.gy, r - 3, 0, 6.2832); g.stroke(); }
+      g.fillStyle = ink; const t = n.title.length > 18 ? n.title.slice(0, 17) + '…' : n.title; g.fillText(t, n.gx, n.gy + r + 12);
     }
-    cv2.addEventListener('click', (e) => {
-      const r = cv2.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
-      let best = null, bd = 28; for (const n of nodes) { const d = Math.hypot(n.gx - x, n.gy - y); if (d < bd) { bd = d; best = n; } }
-      if (best) { $('#dlg').close(); openDoc(best.id); }
-    });
-    cv2._nodes = nodes; window.__graph = { nodes, edges };
-    body.push(cv2, h('p', { class: 'note' }, 'Tap a dot to open that note. Bigger dots have more links.'));
-  }
-  modal({ title: 'Note graph', body, actions: [{ label: 'Close' }] });
+    g.globalAlpha = 1;
+  };
+  const loop = () => {
+    raf = 0; if (!cv2.isConnected) return;
+    energy = step(); draw();
+    if (energy > 0.05 || drag) raf = requestAnimationFrame(loop);
+  };
+  const kick = () => { if (!raf) raf = requestAnimationFrame(loop); };
+  const pos = (e) => { const r = cv2.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; };
+  const pick = (x, y) => { let best = null, bd = 1e9; for (const n of nodes) { const d = Math.hypot(n.gx - x, n.gy - y); if (d < radius(n) + 14 && d < bd) { bd = d; best = n; } } return best; };
+  cv2.addEventListener('pointerdown', (e) => {
+    const [x, y] = pos(e), n = pick(x, y); if (!n) return;
+    e.preventDefault(); try { cv2.setPointerCapture(e.pointerId); } catch {}
+    drag = { n, x0: x, y0: y, dx: n.gx - x, dy: n.gy - y, moved: false }; n.fixed = false; kick();
+  });
+  cv2.addEventListener('pointermove', (e) => {
+    const [x, y] = pos(e);
+    if (!drag) { cv2.style.cursor = pick(x, y) ? 'grab' : ''; return; }
+    if (Math.hypot(x - drag.x0, y - drag.y0) > 5) drag.moved = true;
+    if (drag.moved) { drag.n.gx = clamp(x + drag.dx, 20, W - 20); drag.n.gy = clamp(y + drag.dy, 16, H - 26); cv2.style.cursor = 'grabbing'; kick(); }
+  });
+  const up = (e) => {
+    if (!drag) return;
+    const d = drag; drag = null; cv2.style.cursor = '';
+    if (!d.moved && e.type === 'pointerup') { $('#dlg').close(); openDoc(d.n.id); return; }
+    d.n.fixed = true;                                    // it stays where you drop it
+    const sv = prefs.get('graphPos', {}); sv[d.n.id] = [d.n.gx / W, d.n.gy / H]; prefs.set('graphPos', sv);
+    kick();
+  };
+  cv2.addEventListener('pointerup', up); cv2.addEventListener('pointercancel', up);
+  for (let i = 0; i < 220; i++) step();                  // settle before the first paint
+  draw(); window.__graph = { nodes, edges };
+  body.push(cv2, h('p', { class: 'note' }, 'Drag a dot to move it; it stays where you drop it. Tap a dot to open that note. Bigger dots have more links.'));
+  modal({ title: 'Note graph', body, actions: [
+    { label: 'Close' },
+    { label: 'Tidy up', fn: () => { prefs.set('graphPos', {}); nodes.forEach((n, i) => { n.fixed = false; n.vx = n.vy = 0; }); kick(); return false; } }] });
 }
 async function renameDoc() {
   const t = await ask('Rename', S.doc.title);

@@ -504,7 +504,7 @@ html[data-style=clay] .toast{border-radius:20px}
 .pen-state.on{background:#2f9e44;color:#fff}
 
 /* drag to split */
-.tab{touch-action:none}
+.tab{touch-action:pan-x}
 .card.lifted,.tab.lifted{transform:scale(1.04);filter:brightness(1.05)}
 .dropzones{position:fixed;inset:0;z-index:400;pointer-events:none}
 .dz{position:fixed;border:2px dashed var(--accent);background:var(--accent-soft);border-radius:18px;display:grid;place-items:center;opacity:.9;transition:background .12s,transform .12s}
@@ -639,3 +639,5 @@ dialog .dlg-actions{flex:none;margin-top:0;padding-top:12px;border-top:1px solid
 .pg .pick{position:absolute;top:6px;left:6px;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:rgba(20,22,40,.45);display:grid;place-items:center;color:#fff;z-index:2}
 .pg.picked .pick{background:var(--accent)}
 #sheetSel.on{background:var(--accent-soft);color:var(--accent)}
+
+.selbar{width:max-content}
