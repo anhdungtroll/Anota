@@ -178,7 +178,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.8 (build 1)';
+const APP_VERSION = '3.9 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -811,7 +811,7 @@ function frame() {
     ctx.beginPath(); ctx.moveTo(a.poly[0][0], a.poly[0][1]); for (const q of a.poly) ctx.lineTo(q[0], q[1]); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
   }
   // pen hover cursor (S Pen)
-  if (S.hover && !a && !S.mode && S.tool !== 'laser') {
+  if (S.hover && S.penRing && !a && !S.mode && S.tool !== 'laser') {
     const [hx, hy] = toWorld(S.hover.x, S.hover.y);
     const r = S.tool === 'eraser' ? S.tools.eraser.s / s : Math.max(2.5 / s, (curTool()?.s || 3) * 0.5);
     ctx.save(); ctx.lineWidth = 1.4 / s; ctx.strokeStyle = S.tool === 'eraser' ? 'rgba(224,49,49,.9)' : 'rgba(59,91,219,.9)';
@@ -1633,6 +1633,7 @@ const touches = () => [...ptr.values()].filter((p) => p.t === 'touch');
 
 S.lassoOff = new Set(prefs.get('lassoOff', []));
 S.penCal = Object.assign({ ax: 1, bx: 0, ay: 1, by: 0 }, prefs.get('penCal', {}));
+S.penRing = prefs.get('penRing', true);
 // where the tip really is: raw pointer position corrected by the pen calibration (S Pen only)
 function clientOf(e) {
   if (e.pointerType !== 'pen' || e.pointerId >= 1000) return [e.clientX, e.clientY];
@@ -2467,6 +2468,8 @@ const docLinks = (d) => {
   const out = new Map();
   for (const pg of d.pages) for (const it of pg.items || []) if (it.k === 'text' && it.text && it.text.includes('[[')) {
     for (const m of it.text.matchAll(/\[\[([^\]\n]+)\]\]/g)) { const t = m[1].trim(); if (t) out.set(t.toLowerCase(), t); }
+  } else if (it.k === 'jump' && it.target && it.target.doc) {
+    const mm = (typeof L !== 'undefined' && L.metas || []).find((x) => x.id === it.target.doc); if (mm) out.set(mm.title.trim().toLowerCase(), mm.title.trim());
   }
   return [...out.values()];
 };
@@ -3357,24 +3360,27 @@ function openPop(kind) {
     return;
   }
   if (k === 'insert') {
-    pop.append(h('div', { class: 'insgrid' },
-      insBtn('image', 'Image', () => { closePop(); $('#imgfile').click(); }),
-      insBtn('camera', 'Photo', () => { closePop(); $('#camfile').click(); }),
-      insBtn('text', 'Text box', () => { closePop(); setTool('text'); toast('Tap the page to add text'); }),
-      insBtn('link', 'Link', () => { closePop(); linkDialog(); }),
-      insBtn('present', 'Video', () => { closePop(); videoDialog(); }),
-      insBtn('jump', 'Jump', () => { closePop(); jumpDialog(); }),
-      insBtn('comment', 'Comment', () => { closePop(); S.cmtPrev = S.tool; setTool('comment'); toast('Tap anywhere to leave a comment'); }),
-      insBtn('search', S.zw ? 'Close zoom' : 'Zoom', () => { closePop(); openZoom(); }),
-      insBtn('ruler', S.ruler ? 'Hide ruler' : 'Ruler', () => { closePop(); if (S.ruler) S.ruler = null; else { const cc = viewCentre(); const [wx, wy] = toWorld(vw / 2, vh / 2); S.ruler = { x: wx, y: wy, a: 0 }; toast('Draw along the edge for straight lines. Drag the ruler to move it.', 2800); } requestFrame(); }),
-      insBtn('bookmark', 'Elements', () => { closePop(); elementsDialog(); }),
-      insBtn('copy', 'Paste', () => { closePop(); pasteClip(); }),
-      insBtn('mic', 'Audio', () => { closePop(); audioDialog(); }),
-      insBtn('todo', 'To-do list', () => { closePop(); newList('[ ] '); }),
-      insBtn('list', 'Bullets', () => { closePop(); newList('- '); }),
-      insBtn('olist', 'Numbered', () => { closePop(); newList('1. '); }),
-      insBtn('link', 'Note link', () => { closePop(); noteLinkDialog(); }),
-      insBtn('plus', 'Page', () => { closePop(); if (isInf(S.doc)) return toast('Whiteboards are one endless page'); const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); })));
+    const sec = (title, ...btns) => [h('div', { class: 'inshead' }, title), h('div', { class: 'insgrid' }, ...btns)];
+    pop.append(h('div', { class: 'insmenu' },
+      ...sec('Add',
+        insBtn('image', 'Image', () => { closePop(); $('#imgfile').click(); }),
+        insBtn('camera', 'Photo', () => { closePop(); $('#camfile').click(); }),
+        insBtn('text', 'Text', () => { closePop(); setTool('text'); toast('Tap the page to add text'); }),
+        insBtn('comment', 'Comment', () => { closePop(); S.cmtPrev = S.tool; setTool('comment'); toast('Tap anywhere to leave a comment'); }),
+        insBtn('mic', 'Audio', () => { closePop(); audioDialog(); }),
+        insBtn('present', 'Video', () => { closePop(); videoDialog(); }),
+        insBtn('bookmark', 'Elements', () => { closePop(); elementsDialog(); }),
+        insBtn('copy', 'Paste', () => { closePop(); pasteClip(); })),
+      ...sec('Lists and links',
+        insBtn('todo', 'To-do', () => { closePop(); newList('[ ] '); }),
+        insBtn('list', 'Bullets', () => { closePop(); newList('- '); }),
+        insBtn('olist', 'Numbered', () => { closePop(); newList('1. '); }),
+        insBtn('link', 'Note link', () => { closePop(); noteLinkDialog(); }),
+        insBtn('arrow', 'Web link', () => { closePop(); linkDialog(); })),
+      ...sec('Tools',
+        insBtn('ruler', S.ruler ? 'Hide ruler' : 'Ruler', () => { closePop(); if (S.ruler) S.ruler = null; else { const [wx, wy] = toWorld(vw / 2, vh / 2); S.ruler = { x: wx, y: wy, a: 0 }; toast('Draw along the edge for straight lines. Drag the ruler to move it.', 2800); } requestFrame(); }),
+        insBtn('search', S.zw ? 'Close zoom' : 'Zoom', () => { closePop(); openZoom(); }),
+        insBtn('plus', 'Page', () => { closePop(); if (isInf(S.doc)) return toast('Whiteboards are one endless page'); const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); }))));
     return;
   }
   const T = k === 'pen' ? S.tools[S.penType] : S.tools[k];
@@ -3423,7 +3429,7 @@ function openPop(kind) {
       } }, icon('trash', 16), 'Clear page'));
   } else redraw();
 }
-const insBtn = (ic, label, fn) => h('button', { class: 'ins', onclick: fn }, h('span', { class: 'ico' }, icon(ic, 26)), label);
+const insBtn = (ic, label, fn) => h('button', { class: 'ins', onclick: fn }, h('span', { class: 'ico' }, icon(ic, 22)), label);
 function rememberColor(c) {
   if (PALETTE.includes(c) || HL_PALETTE.includes(c)) return;
   const r = [c, ...prefs.get('recent', []).filter((x) => x !== c)].slice(0, 8); prefs.set('recent', r);
@@ -3754,7 +3760,6 @@ function wrapSel(mark) {
 function buildTextBar() {
   const mk = (label, title, fn, cls) => { const b = h('button', { type: 'button', class: cls || '', title, 'aria-label': title }, label); b.addEventListener('pointerdown', (e) => { e.preventDefault(); }); b.addEventListener('click', (e) => { e.preventDefault(); fn(); }); return b; };
   return h('div', { class: 'txtbar', onpointerdown: (e) => e.preventDefault() },
-    mk('H1', 'Big heading', () => editLines(lineMark(1)), 'tb-h'), mk('H2', 'Heading', () => editLines(lineMark(2)), 'tb-h'), mk('H3', 'Small heading', () => editLines(lineMark(3)), 'tb-h'),
     mk('•', 'Bullet list', () => editLines(lineMark(-1))), mk('1.', 'Numbered list', () => editLines(lineMark(-3))), mk('☐', 'To-do list', () => editLines(lineMark(-2))), mk('⇥', 'Indent (Tab)', () => editLines(indentLine(1))), mk('⇤', 'Outdent (Shift+Tab)', () => editLines(indentLine(-1))), h('i', { class: 'tsep' }),
     mk('B', 'Bold', () => wrapSel('**'), 'tb-b'), mk('U', 'Underline', () => wrapSel('__'), 'tb-u'), mk('S', 'Strikethrough', () => wrapSel('~~'), 'tb-s'),
     h('i', { class: 'tsep' }), mk('Aa−', 'Smaller', () => editorScale(1 / 1.15)), mk('Aa+', 'Bigger', () => editorScale(1.15)),
@@ -3817,17 +3822,26 @@ async function linksDialog() {
 }
 function noteLinkDialog() {
   const q = h('input', { class: 'field', placeholder: 'Search a note, or type a new title', enterkeyhint: 'done' }), list = h('div', { class: 'movelist' });
-  const put = (title) => {
+  const choose = (title) => {
+    const m = findNote(title);
+    if (!m) return put(title);
+    close();
+    modal({ title: 'Link to “' + title + '”', body: [h('p', {}, 'Add a normal note link, or make it a button that jumps to a chosen page or spot inside that note.')], actions: [
+      { label: 'Cancel' },
+      { label: 'Note link only', fn: () => put(title, true) },
+      { label: 'Choose a spot…', kind: 'primary', fn: () => startPick({ label: title, dest: m.id }) }] });
+  };
+  const put = (title, closed) => {
     const cc = viewCentre(), T = S.tools.text, w = 260;
     const it = { id: uid(), k: 'text', x: cc.x - w / 2, y: cc.y - 20, w, text: '[[' + title + ']]', c: T.c, s: T.s };
     if (!isInf(S.doc)) it.x = clamp(it.x, 10, PW - w - 10);
-    close(); afterInsert(cc.pg, cc.pi, it);
+    if (!closed) close(); afterInsert(cc.pg, cc.pi, it);
   };
   const paint = () => {
     list.innerHTML = ''; const t = q.value.trim().toLowerCase();
     L.metas.filter((m) => !m.trashed && !isFolder(m) && m.id !== S.doc.id && (!t || m.title.toLowerCase().includes(t))).sort((a, b) => b.updated - a.updated).slice(0, 30)
-      .forEach((m) => list.append(h('button', { class: 'mi', onclick: () => put(m.title) }, h('span', { class: 'ico' }, icon('book', 20)), m.title)));
-    if (q.value.trim() && !findNote(q.value)) list.append(h('button', { class: 'mi', onclick: () => put(q.value.trim()) }, h('span', { class: 'ico' }, icon('plus', 20)), 'New link “' + q.value.trim() + '”'));
+      .forEach((m) => list.append(h('button', { class: 'mi', onclick: () => choose(m.title) }, h('span', { class: 'ico' }, icon('book', 20)), m.title)));
+    if (q.value.trim() && !findNote(q.value)) list.append(h('button', { class: 'mi', onclick: () => choose(q.value.trim()) }, h('span', { class: 'ico' }, icon('plus', 20)), 'New link “' + q.value.trim() + '”'));
   };
   q.addEventListener('input', paint); paint();
   const close = modal({ title: 'Link to a note', body: [q, list], actions: [{ label: 'Cancel' }] });
@@ -3990,6 +4004,7 @@ function settingsDialog() {
       })(),
       row('Scribble to erase', 'Scratch back and forth over ink to rub it out', [[true, 'On'], [false, 'Off']], () => S.scribble, (v) => { S.scribble = v; prefs.set('scribble', v); }),
       row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); }),
+      row('Blue pen-tip ring', 'The app’s own marker that follows the S Pen. Turn off if you only want Android’s tip', [[true, 'Show'], [false, 'Hide']], () => S.penRing, (v) => { S.penRing = v; prefs.set('penRing', v); requestFrame(); }),
       penAlignRow(paint),
       h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'S Pen button test', h('small', {}, 'Shows exactly what your tablet reports when you press the button')),
         h('div', { class: 'segs mini' }, h('button', { class: 'seg', onclick: () => { $('#dlg').close(); setTimeout(penTestDialog, 80); } }, 'Open test'))));

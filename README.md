@@ -62,6 +62,12 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.9
+- Cleaner Insert menu: grouped into Add / Lists and links / Tools.
+- One Note link: pick a note, then optionally turn it into a jump to a chosen spot inside it. Jump targets also show up in the note graph.
+- Settings > S Pen: hide the app's blue pen-tip ring.
+- Removed the H1/H2/H3 buttons from the text bar.
+
 ## What's new in 3.8
 - Home tab is now just the house icon.
 - Fixed the one-frame black flash on PC: the canvas was being cleared by no-op resize events and painted blank before redraw. Resizes are now skipped when nothing changed and repaint immediately when they do.
