@@ -151,7 +151,7 @@ function modal({ title, body, actions }) {
     h('div', { class: 'dlg-actions' }, (actions || []).map((a) =>
       h('button', { class: 'btn ' + (a.kind || ''), onclick: () => { if (a.fn && a.fn() === false) return; close(); } }, a.label)))
   );
-  d.onclose = null;
+  d.classList.remove('wide'); d.onclose = null;
   d.showModal();
   return close;
 }
@@ -178,7 +178,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.9 (build 1)';
+const APP_VERSION = '3.10 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -257,6 +257,8 @@ const S = {
   stylusOnly: prefs.get('stylusOnly', false), stylusUserSet: prefs.get('stylusUserSet', false),
   gest: Object.assign({ two: 'undo', three: 'redo', hold: 'eraser', click: 'toggle' }, prefs.get('gest', {})),
   holdShape: prefs.get('holdShape', true),
+  holdSmooth: prefs.get('holdSmooth', true),
+  penIcon: prefs.get('penIcon', true),
   holdMs: prefs.get('holdMs', 520),
   shapeFill: prefs.get('shapeFill', false),
   eraserMode: prefs.get('eraserMode', 'stroke'),
@@ -816,6 +818,17 @@ function frame() {
     const r = S.tool === 'eraser' ? S.tools.eraser.s / s : Math.max(2.5 / s, (curTool()?.s || 3) * 0.5);
     ctx.save(); ctx.lineWidth = 1.4 / s; ctx.strokeStyle = S.tool === 'eraser' ? 'rgba(224,49,49,.9)' : 'rgba(59,91,219,.9)';
     ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.arc(hx, hy, r, 0, 6.2832); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
+  if (S.hover && S.penIcon && !a && !S.mode) {
+    const ic = { pen: 'pen', hl: 'hl', eraser: 'eraser', lasso: 'lasso', shape: 'shape', text: 'text', laser: 'laser', hand: 'hand', insert: 'insert', comment: 'comment' }[S.tool] || S.tool;
+    const d = IC[S.tool === 'pen' ? (IC[S.penType] ? S.penType : 'pen') : ic] || IC[ic] || IC.pen;
+    const [hx, hy] = toWorld(S.hover.x, S.hover.y), u = 1 / s, sz = 22 * u;
+    ctx.save(); ctx.translate(hx + 14 * u, hy - 14 * u - sz);
+    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.strokeStyle = 'rgba(60,70,110,.35)'; ctx.lineWidth = 1 * u;
+    ctx.beginPath(); ctx.roundRect(-4 * u, -4 * u, sz + 8 * u, sz + 8 * u, 8 * u); ctx.fill(); ctx.stroke();
+    ctx.scale(sz / 24, sz / 24); ctx.strokeStyle = '#3b5bdb'; ctx.lineWidth = 2; ctx.lineCap = ctx.lineJoin = 'round';
+    try { ctx.stroke(new Path2D(d)); } catch {}
+    ctx.restore();
   }
   if (S.ruler) drawRuler(ctx, s);
   drawMinimap();
@@ -2129,7 +2142,16 @@ function alignTo(from, to) { // rotate / reverse a closed outline so the morph i
 function trySnap(a) {
   if (S.act !== a || a.snap || a.kind !== 'ink') return;
   const p = a.st.p, P = []; for (let i = 0; i < p.length; i += 3) P.push([p[i], p[i + 1]]);
-  const sh = recognize(P); if (!sh) return;
+  const sh = recognize(P);
+  if (!sh) {
+    if (!S.holdSmooth || P.length < 8) return;
+    const len = P.reduce((t, q, i) => t + (i ? Math.hypot(q[0] - P[i - 1][0], q[1] - P[i - 1][1]) : 0), 0);
+    if (len < 40) return;
+    const N = clamp(Math.round(len / 6), 24, 160), from = resample(P, N); let to = from.map((q) => q.slice());
+    for (let pass = 0; pass < 14; pass++) { const nx = to.map((q) => q.slice()); for (let i = 1; i < N - 1; i++) { nx[i][0] = (to[i - 1][0] + 2 * to[i][0] + to[i + 1][0]) / 4; nx[i][1] = (to[i - 1][1] + 2 * to[i][1] + to[i + 1][1]) / 4; } to = nx; }
+    a.snap = { t0: now(), from, to, kind: 'curve', final: null, finalPts: to, done: false };
+    a.st.sh = 1; a.st.vp = false; buzz(14); requestFrame(); return;
+  }
   if (S.loopSel === 'select' && sh.kind !== 'line') {
     S.act = null; baseDirty = true; buzz(18);
     setTool('lasso'); lassoSelect(P);
@@ -3760,6 +3782,7 @@ function wrapSel(mark) {
 function buildTextBar() {
   const mk = (label, title, fn, cls) => { const b = h('button', { type: 'button', class: cls || '', title, 'aria-label': title }, label); b.addEventListener('pointerdown', (e) => { e.preventDefault(); }); b.addEventListener('click', (e) => { e.preventDefault(); fn(); }); return b; };
   return h('div', { class: 'txtbar', onpointerdown: (e) => e.preventDefault() },
+    mk('H1', 'Big heading', () => editLines(lineMark(1)), 'tb-h'), mk('H2', 'Heading', () => editLines(lineMark(2)), 'tb-h'), mk('H3', 'Small heading', () => editLines(lineMark(3)), 'tb-h'),
     mk('•', 'Bullet list', () => editLines(lineMark(-1))), mk('1.', 'Numbered list', () => editLines(lineMark(-3))), mk('☐', 'To-do list', () => editLines(lineMark(-2))), mk('⇥', 'Indent (Tab)', () => editLines(indentLine(1))), mk('⇤', 'Outdent (Shift+Tab)', () => editLines(indentLine(-1))), h('i', { class: 'tsep' }),
     mk('B', 'Bold', () => wrapSel('**'), 'tb-b'), mk('U', 'Underline', () => wrapSel('__'), 'tb-u'), mk('S', 'Strikethrough', () => wrapSel('~~'), 'tb-s'),
     h('i', { class: 'tsep' }), mk('Aa−', 'Smaller', () => editorScale(1 / 1.15)), mk('Aa+', 'Bigger', () => editorScale(1.15)),
@@ -3852,20 +3875,20 @@ function graphDialog() {
   const nodes = [...new Set(edges.flat())].slice(0, 90);
   const body = [];
   if (!nodes.length) { body.push(h('p', { class: 'note' }, 'No connections yet. Type [[Note title]] inside a text box (or use Insert > Note link) and your notes will appear here as a network you can drag around.')); modal({ title: 'Note graph', body, actions: [{ label: 'Close' }] }); return; }
-  const W = 340, H = 400, saved = prefs.get('graphPos', {});
-  const cv2 = h('canvas', { class: 'graphcv', width: W * 2, height: H * 2, style: `width:100%;max-width:${W}px;aspect-ratio:${W}/${H};touch-action:none` });
-  nodes.forEach((n, i) => { const a = i / nodes.length * 6.283, p = saved[n.id]; n.gx = p ? p[0] * W : W / 2 + Math.cos(a) * 110; n.gy = p ? p[1] * H : H / 2 + Math.sin(a) * 120; n.vx = n.vy = 0; n.deg = 0; n.fixed = !!p; });
+  const W = Math.round(clamp(innerWidth - 56, 300, 920)), H = Math.round(clamp(innerHeight * 0.68, 360, 700)), K = Math.min(W / 340, H / 400), saved = prefs.get('graphPos', {});
+  const cv2 = h('canvas', { class: 'graphcv', width: W * 2, height: H * 2, style: `width:${W}px;max-width:100%;aspect-ratio:${W}/${H};touch-action:none` });
+  nodes.forEach((n, i) => { const a = i / nodes.length * 6.283, p = saved[n.id]; n.gx = p ? p[0] * W : W / 2 + Math.cos(a) * 160 * K; n.gy = p ? p[1] * H : H / 2 + Math.sin(a) * 160 * K; n.vx = n.vy = 0; n.deg = 0; n.fixed = !!p; });
   edges.forEach(([a, b]) => { a.deg++; b.deg++; });
-  const radius = (n) => 6 + Math.min(7, n.deg * 1.5);
+  const radius = (n) => (6 + Math.min(7, n.deg * 1.5)) * Math.min(1.6, 0.6 + K * 0.4);
   let energy = 1, drag = null, raf = 0;
   const step = () => {
-    for (const a of nodes) for (const b of nodes) if (a !== b) { const dx = a.gx - b.gx, dy = a.gy - b.gy, d2 = dx * dx + dy * dy + 40, d = Math.sqrt(d2), f = 1700 / d2; a.vx += dx / d * f; a.vy += dy / d * f; }
-    for (const [a, b] of edges) { const dx = b.gx - a.gx, dy = b.gy - a.gy, d = Math.hypot(dx, dy) || 1, f = (d - 78) * 0.035; a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f; }
+    for (const a of nodes) for (const b of nodes) if (a !== b) { const dx = a.gx - b.gx, dy = a.gy - b.gy, d2 = dx * dx + dy * dy + 40, d = Math.sqrt(d2), f = 5200 * K * K / d2; a.vx += dx / d * f; a.vy += dy / d * f; }
+    for (const [a, b] of edges) { const dx = b.gx - a.gx, dy = b.gy - a.gy, d = Math.hypot(dx, dy) || 1, f = (d - 140 * K) * 0.035; a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f; }
     let e = 0;
     for (const n of nodes) {
       if (drag && drag.n === n) { n.vx = n.vy = 0; continue; }
       if (n.fixed) { n.vx = n.vy = 0; continue; }
-      n.vx += (W / 2 - n.gx) * 0.004; n.vy += (H / 2 - n.gy) * 0.004;
+      n.vx += (W / 2 - n.gx) * 0.0016; n.vy += (H / 2 - n.gy) * 0.0016;
       n.gx = clamp(n.gx + n.vx, 26, W - 26); n.gy = clamp(n.gy + n.vy, 22, H - 30); n.vx *= 0.82; n.vy *= 0.82; e += Math.abs(n.vx) + Math.abs(n.vy);
     }
     return e;
@@ -3877,7 +3900,7 @@ function graphDialog() {
     const hot = drag ? new Set([drag.n, ...edges.filter((e) => e.includes(drag.n)).flat()]) : null;
     g.lineWidth = 1.6; g.strokeStyle = acc;
     for (const [a, b] of edges) { g.globalAlpha = hot ? (hot.has(a) && hot.has(b) && (a === drag.n || b === drag.n) ? 0.9 : 0.15) : 0.45; g.beginPath(); g.moveTo(a.gx, a.gy); g.lineTo(b.gx, b.gy); g.stroke(); }
-    g.globalAlpha = 1; g.font = '600 11px sans-serif'; g.textAlign = 'center';
+    g.globalAlpha = 1; g.font = '600 ' + Math.round(11 * Math.min(1.35, 0.7 + K * 0.3)) + 'px sans-serif'; g.textAlign = 'center';
     for (const n of nodes) {
       const r = radius(n) + (drag && drag.n === n ? 3 : 0);
       g.globalAlpha = hot && !hot.has(n) ? 0.35 : 1;
@@ -3921,6 +3944,7 @@ function graphDialog() {
   modal({ title: 'Note graph', body, actions: [
     { label: 'Close' },
     { label: 'Tidy up', fn: () => { prefs.set('graphPos', {}); nodes.forEach((n, i) => { n.fixed = false; n.vx = n.vy = 0; }); kick(); return false; } }] });
+  $('#dlg').classList.add('wide');
 }
 async function renameDoc() {
   const t = await ask('Rename', S.doc.title);
@@ -4002,6 +4026,8 @@ function settingsDialog() {
         sl.addEventListener('input', () => { S.holdMs = Math.round(+sl.value * 1000); prefs.set('holdMs', S.holdMs); t(); }); t();
         return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Hold-still delay', lab), h('div', { class: 'sizerow' }, h('span', { class: 'rl' }, 'Quick'), sl, h('span', { class: 'rl' }, 'Slow')));
       })(),
+      row('Hold still to smooth a curve', 'Draw a wobbly line and pause: it becomes a smooth curve', [[true, 'On'], [false, 'Off']], () => S.holdSmooth, (v) => { S.holdSmooth = v; prefs.set('holdSmooth', v); }),
+      row('Tool icon by the pen tip', 'A small icon of the current tool next to the S Pen while hovering', [[true, 'Show'], [false, 'Hide']], () => S.penIcon, (v) => { S.penIcon = v; prefs.set('penIcon', v); requestFrame(); }),
       row('Scribble to erase', 'Scratch back and forth over ink to rub it out', [[true, 'On'], [false, 'Off']], () => S.scribble, (v) => { S.scribble = v; prefs.set('scribble', v); }),
       row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); }),
       row('Blue pen-tip ring', 'The app’s own marker that follows the S Pen. Turn off if you only want Android’s tip', [[true, 'Show'], [false, 'Hide']], () => S.penRing, (v) => { S.penRing = v; prefs.set('penRing', v); requestFrame(); }),
@@ -4264,4 +4290,4 @@ async function boot() {
 boot();
 
 // test hook
-window.__ink = { S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote };
+window.__ink = { S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote, graphDialog };

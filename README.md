@@ -62,6 +62,12 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.10
+- H1/H2/H3 buttons are back in the text bar.
+- Note graph is much larger (wide dialog, scaled layout).
+- Hold still after drawing a wobbly line and it smooths into a curve (Settings > S Pen to turn off).
+- Small icon of the current tool floats beside the S Pen tip while hovering (can be hidden).
+
 ## What's new in 3.9
 - Cleaner Insert menu: grouped into Add / Lists and links / Tools.
 - One Note link: pick a note, then optionally turn it into a jump to a chosen spot inside it. Jump targets also show up in the note graph.
