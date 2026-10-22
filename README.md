@@ -62,6 +62,9 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.11
+- Pen-tip tool icon is now a small bare icon (no box). Still switchable in Settings > S Pen.
+
 ## What's new in 3.10
 - H1/H2/H3 buttons are back in the text bar.
 - Note graph is much larger (wide dialog, scaled layout).

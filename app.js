@@ -178,7 +178,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.10 (build 1)';
+const APP_VERSION = '3.11 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -822,12 +822,12 @@ function frame() {
   if (S.hover && S.penIcon && !a && !S.mode) {
     const ic = { pen: 'pen', hl: 'hl', eraser: 'eraser', lasso: 'lasso', shape: 'shape', text: 'text', laser: 'laser', hand: 'hand', insert: 'insert', comment: 'comment' }[S.tool] || S.tool;
     const d = IC[S.tool === 'pen' ? (IC[S.penType] ? S.penType : 'pen') : ic] || IC[ic] || IC.pen;
-    const [hx, hy] = toWorld(S.hover.x, S.hover.y), u = 1 / s, sz = 22 * u;
-    ctx.save(); ctx.translate(hx + 14 * u, hy - 14 * u - sz);
-    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.strokeStyle = 'rgba(60,70,110,.35)'; ctx.lineWidth = 1 * u;
-    ctx.beginPath(); ctx.roundRect(-4 * u, -4 * u, sz + 8 * u, sz + 8 * u, 8 * u); ctx.fill(); ctx.stroke();
-    ctx.scale(sz / 24, sz / 24); ctx.strokeStyle = '#3b5bdb'; ctx.lineWidth = 2; ctx.lineCap = ctx.lineJoin = 'round';
-    try { ctx.stroke(new Path2D(d)); } catch {}
+    const [hx, hy] = toWorld(S.hover.x, S.hover.y), u = 1 / s, sz = 15 * u;
+    ctx.save(); ctx.translate(hx + 8 * u, hy - 8 * u - sz);
+    ctx.scale(sz / 24, sz / 24); ctx.lineCap = ctx.lineJoin = 'round';
+    const P2 = new Path2D(d);
+    ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 5; ctx.stroke(P2);   // thin halo so it reads on any paper, no box
+    ctx.strokeStyle = '#3b5bdb'; ctx.lineWidth = 2.4; ctx.stroke(P2);
     ctx.restore();
   }
   if (S.ruler) drawRuler(ctx, s);
@@ -4027,7 +4027,7 @@ function settingsDialog() {
         return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Hold-still delay', lab), h('div', { class: 'sizerow' }, h('span', { class: 'rl' }, 'Quick'), sl, h('span', { class: 'rl' }, 'Slow')));
       })(),
       row('Hold still to smooth a curve', 'Draw a wobbly line and pause: it becomes a smooth curve', [[true, 'On'], [false, 'Off']], () => S.holdSmooth, (v) => { S.holdSmooth = v; prefs.set('holdSmooth', v); }),
-      row('Tool icon by the pen tip', 'A small icon of the current tool next to the S Pen while hovering', [[true, 'Show'], [false, 'Hide']], () => S.penIcon, (v) => { S.penIcon = v; prefs.set('penIcon', v); requestFrame(); }),
+      row('Tool icon by the pen tip', 'A tiny icon of the current tool beside the S Pen tip while hovering', [[true, 'Show'], [false, 'Hide']], () => S.penIcon, (v) => { S.penIcon = v; prefs.set('penIcon', v); requestFrame(); }),
       row('Scribble to erase', 'Scratch back and forth over ink to rub it out', [[true, 'On'], [false, 'Off']], () => S.scribble, (v) => { S.scribble = v; prefs.set('scribble', v); }),
       row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); }),
       row('Blue pen-tip ring', 'The app’s own marker that follows the S Pen. Turn off if you only want Android’s tip', [[true, 'Show'], [false, 'Hide']], () => S.penRing, (v) => { S.penRing = v; prefs.set('penRing', v); requestFrame(); }),
