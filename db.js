@@ -3,14 +3,15 @@
 //  docs   : pages, strokes, objects
 //  pdfs   : original PDF bytes
 //  assets : images attached to notes
+//  tpl    : your own page templates
 //  idx    : search index per note (typed text, recognised handwriting, text inside pictures)
 let dbp;
 function open() {
   return (dbp ||= new Promise((res, rej) => {
-    const r = indexedDB.open('inknote', 3);
+    const r = indexedDB.open('inknote', 4);
     r.onupgradeneeded = () => {
       const d = r.result;
-      for (const n of ['meta', 'docs', 'idx']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
+      for (const n of ['meta', 'docs', 'idx', 'tpl']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
       for (const n of ['pdfs', 'assets']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n);
     };
     r.onsuccess = () => res(r.result);
@@ -52,9 +53,13 @@ export const db = {
   putIdx: (e) => run(['idx'], 'readwrite', (x) => x.put(e)),
   delIdx: (id) => run(['idx'], 'readwrite', (x) => x.delete(id)),
   clearIdx: () => run(['idx'], 'readwrite', (x) => x.clear()),
+  // custom templates (their pictures live in assets as 'tplimg:…')
+  listTpl: () => run(['tpl'], 'readonly', (x) => x.getAll()),
+  putTpl: (t) => run(['tpl'], 'readwrite', (x) => x.put(t)),
+  delTpl: (id, assetIds = []) => run(['tpl', 'assets'], 'readwrite', (x, a) => { for (const r of assetIds) a.delete(r); return x.delete(id); }),
   // raw access for backup / restore
   keys: (store) => run([store], 'readonly', (s) => s.getAllKeys()),
   getRaw: (store, key) => run([store], 'readonly', (s) => s.get(key)),
   putRaw: (store, key, val) => run([store], 'readwrite', (s) => (s.keyPath ? s.put(val) : s.put(val, key))),
-  clearAll: () => run(['meta', 'docs', 'pdfs', 'assets', 'idx'], 'readwrite', (...ss) => { ss.forEach((s) => s.clear()); }),
+  clearAll: () => run(['meta', 'docs', 'pdfs', 'assets', 'idx', 'tpl'], 'readwrite', (...ss) => { ss.forEach((s) => s.clear()); }),
 };

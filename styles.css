@@ -681,3 +681,30 @@ dialog.setwide{width:min(720px,calc(100vw - 20px));height:min(640px,90vh)}
 .bkbtns{display:flex;flex-direction:column;gap:10px;margin:14px 0}
 .bkbtns .btn{justify-content:center;gap:8px;padding:12px}
 label.chk{display:flex;align-items:center;gap:8px;font-weight:600;margin:6px 0 2px}
+
+.readchip{position:absolute;z-index:30;left:12px;bottom:78px;display:flex;align-items:center;gap:7px;padding:7px 12px;border-radius:999px;font-size:12.5px;font-weight:700;background:var(--panel);color:var(--muted);box-shadow:var(--shadow);border:0}
+.readchip[hidden]{display:none}
+.readchip.ok{color:#2b8a3e}.readchip.bad{color:#c92a2a}
+.readchip .spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line,rgba(120,120,140,.3));border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.ptbar{position:absolute;z-index:45;display:flex;gap:2px;background:var(--panel);border-radius:14px;box-shadow:var(--shadow);padding:4px;animation:popIn .14s both}
+.ptbar[hidden]{display:none}
+.ptbar button{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:10px;font-weight:700;font-size:13.5px;color:var(--ink)}
+.ptbar button:hover{background:var(--panel2)}
+.ptbar .svg{color:var(--accent)}
+
+/* templates */
+.tplgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin:6px 0 10px}
+.tplcard{position:relative;display:flex;flex-direction:column}
+.tplbtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 6px;border-radius:12px;border:1.5px solid var(--line,#d5d9e6);background:var(--card,#fff);color:inherit;cursor:pointer;font:inherit;font-size:13px;font-weight:600;width:100%}
+.tplbtn:hover,.tplbtn:focus-visible{border-color:var(--accent,#3b5bdb)}
+.tplbtn canvas{width:100%;height:auto;border-radius:6px;box-shadow:0 1px 4px rgba(10,15,40,.18);background:#fff}
+.tpldel{position:absolute;top:4px;right:4px;width:28px;height:28px;border-radius:50%;border:0;background:rgba(255,255,255,.92);color:#c92a2a;display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.tplnew{align-items:center;justify-content:center;gap:6px;min-height:150px;border:1.5px dashed var(--line,#b4bacb);border-radius:12px;background:transparent;color:inherit;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.tplplus{opacity:.7}
+.tplhint{grid-column:1/-1}
+.tblform{display:grid;grid-template-columns:1fr 170px;gap:16px;align-items:start}
+.tblform textarea.field{resize:vertical}
+.tblpv{width:170px;height:auto;border-radius:6px;box-shadow:0 1px 6px rgba(10,15,40,.25);background:#fff}
+@media(max-width:560px){.tblform{grid-template-columns:1fr}.tblpv{display:none}}

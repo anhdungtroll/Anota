@@ -94,27 +94,49 @@ function pickScale(boxes) {
   const med = hs.length ? hs[Math.floor(hs.length / 2)] : 30;
   return Math.min(2.2, Math.max(0.25, 34 / med));
 }
-async function ocrInk(pg, pace) {
-  const st = inkStrokes(pg); if (!st.length) return [];
-  const boxes = st.map(strokeBox);
-  const bb = boxes.reduce((a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])], [1e9, 1e9, -1e9, -1e9]);
-  const pad = 14, ox0 = bb[0] - pad, oy0 = bb[1] - pad, W = bb[2] - bb[0] + 2 * pad, H = bb[3] - bb[1] + 2 * pad;
-  const base = pickScale(boxes);
+const strokeSig = (list) => { let n = 0, h = 0; for (const s of list) { n += s.p.length; h = (h * 31 + Math.round(s.p[0] * 3) + Math.round(s.p[1] * 7) + s.p.length + Math.round(s.p[s.p.length - 3] * 5)) | 0; } return list.length + ':' + n + ':' + h; };
+/* Handwriting is read in blocks (a block is a paragraph: lines that sit close together). Only blocks whose strokes
+   changed are read again, so writing a new line costs one small read, not a whole page. */
+function segmentBands(st, boxes) {
+  const order = st.map((_, i) => i).sort((a, b) => (boxes[a][1] + boxes[a][3]) - (boxes[b][1] + boxes[b][3]));
+  const hs = boxes.map((b) => b[3] - b[1]).filter((v) => v > 4).sort((a, b) => a - b), med = hs.length ? hs[hs.length >> 1] : 30, gap = Math.max(10, med * 1.1);
+  const bands = []; let cur = null;
+  for (const i of order) {
+    const b = boxes[i];
+    if (cur && b[1] <= cur.y1 + gap) { cur.ix.push(i); cur.y1 = Math.max(cur.y1, b[3]); cur.y0 = Math.min(cur.y0, b[1]); cur.x0 = Math.min(cur.x0, b[0]); cur.x1 = Math.max(cur.x1, b[2]); }
+    else { cur = { ix: [i], y0: b[1], y1: b[3], x0: b[0], x1: b[2] }; bands.push(cur); }
+  }
+  return bands.map((b) => ({ ...b, strokes: b.ix.map((i) => st[i]), boxes: b.ix.map((i) => boxes[i]) }));
+}
+async function readBand(band, pace) {
+  const pad = 14, x0 = band.x0 - pad, y0 = band.y0 - pad, W = band.x1 - band.x0 + 2 * pad, H = band.y1 - band.y0 + 2 * pad;
+  const base = Math.min(pickScale(band.boxes), 2300 / Math.max(W, 1));
   const attempt = async (SC) => {
-    const TILE = Math.max(200, Math.floor(2200 / SC) - 40), words = [];
-    for (let ty = 0; ty < H; ty += TILE) for (let tx = 0; tx < W; tx += TILE) {
-      const ox = ox0 + tx, oy = oy0 + ty, w = Math.min(TILE + 40, W - tx), h = Math.min(TILE + 40, H - ty);
-      const inTile = st.filter((s, i) => { const b = boxes[i]; return b[2] >= ox && b[0] <= ox + w && b[3] >= oy && b[1] <= oy + h; });
-      if (!inTile.length || w < 6 || h < 6) continue;
+    const TILE = Math.max(160, Math.floor(2300 / SC) - 40), words = [];
+    for (let ty = 0; ty < H; ty += TILE) {
+      const oy = y0 + ty, h = Math.min(TILE + 40, H - ty);
+      const inTile = band.strokes.filter((s, i) => band.boxes[i][3] >= oy && band.boxes[i][1] <= oy + h);
+      if (!inTile.length) continue;
       await pace();
-      const res = await ocr.recognize(renderChunk(inTile, ox, oy, w, h, SC));
-      for (const r of res) words.push([r.t, Math.round(ox + r.x / SC), Math.round(oy + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]);
+      const res = await ocr.recognize(renderChunk(inTile, x0, oy, W, h, SC));
+      for (const r of res) words.push([r.t, Math.round(x0 + r.x / SC), Math.round(oy + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]);
     }
     return words;
   };
   let words = await attempt(base);
-  if (!words.length && st.length >= 3) { words = await attempt(base * 0.6); if (!words.length) words = await attempt(Math.min(2.4, base * 1.6)); }
+  if (!words.length && band.strokes.length >= 3) { words = await attempt(base * 0.6); if (!words.length) words = await attempt(Math.min(2.4, base * 1.6)); }
   return words;
+}
+async function ocrInk(pg, pace, prevBands, langs) {
+  const st = inkStrokes(pg); if (!st.length) return { words: [], bands: [] };
+  const boxes = st.map(strokeBox), bands = segmentBands(st, boxes), out = [], keep = new Map((prevBands || []).map((b) => [b.sg + '@' + b.langs, b]));
+  for (const b of bands) {
+    const sg = strokeSig(b.strokes), hit = keep.get(sg + '@' + langs);
+    if (hit) { out.push(hit); continue; }
+    if (b.y1 - b.y0 < 3 && b.x1 - b.x0 < 24) { out.push({ sg, langs, words: [] }); continue; }       // a dot or a speck
+    out.push({ sg, langs, words: await readBand(b, pace) });
+  }
+  return { words: out.flatMap((b) => b.words), bands: out };
 }
 async function ocrImage(ref, pace) {
   const blob = await db.getAsset(ref); if (!blob) return [];
@@ -145,6 +167,7 @@ export async function indexDoc(doc, opts) {
     // PDF text layer
     if (pg.pdf != null) {
       if (prev && prev.f && prev.ps === 'p') { ent.f = prev.f; ent.ps = 'p'; }
+      else if (total > (opts.pdfCap == null ? 40 : opts.pdfCap)) { ent.f = (prev && prev.f) || []; }       // big PDFs: read their text only when you search inside them, not in the background
       else {
         if (!pdfTried) { pdfTried = true; try { pdf = await opts.openPdf(doc.id); } catch { pdf = null; } }
         if (pdf) {
@@ -159,9 +182,9 @@ export async function indexDoc(doc, opts) {
     }
     // handwriting
     const is = inkSig(pg);
-    if (prev && prev.is === is && prev.langs === langs && prev.i) { ent.is = is; ent.i = prev.i; ent.langs = langs; }
+    if (prev && prev.is === is && prev.langs === langs && prev.i) { ent.is = is; ent.i = prev.i; ent.b = prev.b; ent.langs = langs; }
     else if (opts.doOcr && inkStrokes(pg).length) {
-      todo++; try { ent.i = await ocrInk(pg, opts.pace); ent.is = is; ent.langs = langs; } catch (e) { if (String(e.message) === 'stopped') throw e; console.warn('ocr ink', e); ent.i = prev && prev.i || []; ent.is = ''; }
+      todo++; try { const r = await ocrInk(pg, opts.pace, prev && prev.b, langs); ent.i = r.words; ent.b = r.bands; ent.is = is; ent.langs = langs; } catch (e) { if (String(e.message) === 'stopped') throw e; console.warn('ocr ink', e); ent.i = prev && prev.i || []; ent.is = ''; }
     } else if (!inkStrokes(pg).length) { ent.is = is; ent.i = []; ent.langs = langs; }
     else { ent.is = prev ? prev.is : ''; ent.i = prev && prev.i || []; ent.langs = prev && prev.langs; ent.pending = true; }
     // pictures: words are cached per picture as fractions (0..1), then placed where the picture sits now
@@ -191,7 +214,7 @@ export async function indexDoc(doc, opts) {
 /* ---------- the background indexer ---------- */
 export const Indexer = {
   mem: new Map(),            // id -> entry
-  queue: [], running: false, status: { docs: 0, done: 0, page: '' }, listeners: new Set(),
+  queue: [], running: false, curId: null, urgentUntil: 0, status: { docs: 0, done: 0, page: '', err: '' }, listeners: new Set(),
   opts: null,
   async load() { if (this.loaded) return; this.loaded = true; try { for (const e of await db.listIdx()) this.mem.set(e.id, e); } catch {} },
   emit() { for (const f of this.listeners) try { f(this.status); } catch {} },
@@ -201,7 +224,7 @@ export const Indexer = {
     this.running = true;
     try {
       while (this.queue.length) {
-        const id = this.queue.shift(); this.status.docs = this.queue.length + 1; this.emit();
+        const id = this.queue.shift(); this.curId = id; this.status.docs = this.queue.length + 1; this.emit();
         let doc = null; try { doc = await db.getDoc(id); } catch {}
         if (!doc) { this.mem.delete(id); try { await db.delIdx(id); } catch {} continue; }
         await this.opts.pace();
@@ -209,10 +232,10 @@ export const Indexer = {
           const o = this.opts, doOcr = o.ocrOn();
           const e = await indexDoc(doc, { ...o, doOcr, langs: o.langs(), onPage: (d, t) => { this.status.page = (doc.title || '') + ' ' + d + '/' + t; this.emit(); } });
           this.mem.set(id, e);
-        } catch (e) { if (String(e && e.message) === 'stopped') { this.queue.unshift(id); await new Promise((r) => setTimeout(r, 2000)); } else console.warn('index', e); }
+        } catch (e) { if (String(e && e.message) === 'stopped') { this.queue.unshift(id); await new Promise((r) => setTimeout(r, 2000)); } else { console.warn('index', e); this.status.err = String(e && e.message || e); } }
         this.status.done++; this.emit();
       }
-    } finally { this.running = false; this.status = { docs: 0, done: 0, page: '' }; this.emit(); }
+    } finally { this.running = false; this.curId = null; this.status = { docs: 0, done: 0, page: '', err: this.status.err || '' }; this.emit(); }
   },
   /** every note whose index is missing, outdated or still has handwriting waiting to be read */
   async scanAll(metas) {
@@ -223,6 +246,8 @@ export const Indexer = {
       if (!e || e.updated < (m.updated || 0) || e.langs !== this.opts.langs() || (e.pending && this.opts.ocrOn())) this.enqueue(m.id);
     }
   },
+  /** read this note right now: skip the usual wait for you to stop writing */
+  urgent(id) { this.urgentUntil = Date.now() + 60000; this.status.err = ''; this.enqueue(id, true); },
   forget(id) { this.mem.delete(id); this.queue = this.queue.filter((x) => x !== id); db.delIdx(id).catch(() => {}); },
   search(q) { const out = []; for (const [id, e] of this.mem) { const h = searchEntry(e, q); if (h.length) out.push({ id, hits: h }); } return out; },
 };

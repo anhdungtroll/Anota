@@ -1,5 +1,5 @@
 // Offline text recognition (Tesseract engine in a Web Worker). Lazy: nothing loads until the first call,
-// and the worker (about 100 MB of memory) is shut down again after a minute of no use.
+// and the worker (about 100 MB of memory) is shut down again after four minutes of no use (so a burst of writing is read quickly, then the memory is freed).
 const BASE = new URL('./vendor/ocr/', import.meta.url).href;
 let worker = null, ready = null, langs = ['eng', 'vie'], seq = 0, idle = 0;
 const pending = new Map();
@@ -31,7 +31,7 @@ export function stop() {
   for (const p of pending.values()) p.rej(new Error('stopped'));
   pending.clear();
 }
-const bump = () => { clearTimeout(idle); idle = setTimeout(stop, 60000); };
+const bump = () => { clearTimeout(idle); idle = setTimeout(stop, 240000); };
 
 function parseTsv(tsv) {
   const out = [];
@@ -55,3 +55,12 @@ export async function recognize(src) {
   return parseTsv(tsv);
 }
 export const ocrBusy = () => pending.size > 0;
+
+/** self-test for Settings: draws known words, reads them back, reports the time */
+export async function selfTest() {
+  const c = document.createElement('canvas'); c.width = 900; c.height = 190;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 900, 190); g.fillStyle = '#000'; g.font = '46px sans-serif';
+  g.fillText('Hello notes 2026', 30, 70); g.fillText('Xin chào Việt Nam', 30, 140);
+  const t0 = performance.now(), w = await recognize(c);
+  return { ms: Math.round(performance.now() - t0), text: w.map((x) => x.t).join(' ') };
+}

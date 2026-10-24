@@ -31,6 +31,10 @@ export async function exportAll({ onProgress, prefsText } = {}) {
     }
     if (parts.length > 400) { const blob = new Blob(parts); parts.length = 0; parts.push(blob); }      // let the browser keep big chunks on disk
   }
+  for (const t of await db.listTpl().catch(() => [])) {
+    rec(parts, { t: 'tpl', k: t.id }, JSON.stringify(t));
+    for (const ref of refsOf({ pages: [t] })) { if (done.has(ref)) continue; done.add(ref); const b = await db.getAsset(ref); if (b) { rec(parts, { t: 'asset', k: ref, ct: b.type || '' }, b); files++; } }
+  }
   if (prefsText) rec(parts, { t: 'prefs' }, prefsText);
   rec(parts, { t: 'end' });
   return { blob: new Blob(parts, { type: 'application/octet-stream' }), notes, files };
@@ -80,6 +84,7 @@ export async function restore(file, { mode = 'merge', onProgress, prefs = true }
     } else if (h.t === 'doc') { if (skip === h.k) continue; await db.putRaw('docs', null, JSON.parse(await text(r))); }
     else if (h.t === 'pdf') { if (skip === h.k) continue; await db.putRaw('pdfs', h.k, await file.slice(r.start, r.end).arrayBuffer()); out.files++; }
     else if (h.t === 'asset') { if (mode === 'merge' && await db.getAsset(h.k)) continue; await db.putRaw('assets', h.k, file.slice(r.start, r.end, h.ct || '')); out.files++; }
+    else if (h.t === 'tpl') await db.putRaw('tpl', null, JSON.parse(await text(r)));
     else if (h.t === 'prefs') prefsText = await text(r);
   }
   if (prefs && prefsText) { try { localStorage.setItem('inknote.prefs', prefsText); } catch {} }

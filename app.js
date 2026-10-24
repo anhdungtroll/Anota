@@ -2,6 +2,7 @@ import './polyfills.js';
 import { db } from './db.js';
 import { buildPdf } from './pdfout.js';
 import * as ocr from './ocr.js';
+import { drawTpl, TEMPLATES, tableTemplate, previewTpl } from './templates.js';
 import { Indexer, searchEntry, typedOf, tokens, norm } from './search.js';
 import { exportAll, inspect, restore } from './backup.js';
 
@@ -185,7 +186,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.13 (build 1)';
+const APP_VERSION = '3.14 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -678,8 +679,9 @@ function drawPage(c, pg, o) {
       const bmp = o.pdfBitmap || pdfCache.get(pg.pdf)?.canvas;
       if (bmp) c.drawImage(bmp, 0, 0, PW, pg.h);
       else { c.fillStyle = '#9aa0b8'; c.font = '600 22px system-ui'; c.textAlign = 'center'; c.fillText('Rendering…', PW / 2, 60); }
-    } else paperPattern(c, pg, doc.paper.style, dark, vis, false, scale);
+    } else if (!pg.tpl) paperPattern(c, pg, doc.paper.style, dark, vis, false, scale);
   }
+  if (pg.tpl) drawTpl(c, pg.tpl, dark);
   if (pg.bm && !o.flat && !inf) { c.fillStyle = '#e8590c'; c.beginPath(); c.moveTo(PW - 66, 0); c.lineTo(PW - 30, 0); c.lineTo(PW - 30, 46); c.lineTo(PW - 48, 34); c.lineTo(PW - 66, 46); c.closePath(); c.fill(); }
   if (o.bgOnly) { if (!inf) c.restore(); return; }
   const sel = o.skipSel && S.sel ? S.sel : null;
@@ -838,6 +840,7 @@ function frame() {
     ctx.restore();
   }
   if (S.find) drawFindHits(ctx, s);
+  if (S.ptext) drawPtext(ctx, s);
   if (S.ruler) drawRuler(ctx, s);
   drawMinimap();
   if (S.laser.length || S.tool === 'laser') drawLaser(ctx, s);
@@ -1924,6 +1927,15 @@ function beginTool(tool, e, sx, sy) {
     eraseAt(wx, wy);
   } else if (tool === 'text' || tool === 'comment') {
     S.act = { ...base, kind: tool, wx, wy, sx, sy, moved: false };
+  } else if (tool === 'ptext') {
+    const pi2 = pageAt(wy), pg2 = S.doc.pages[pi2];
+    if (!pg2 || pg2.pdf == null) { toast('Select text works on PDF pages'); return; }
+    const T = S.tab, words = T.pdfWords && T.pdfWords.get(pg2.pdf);
+    if (!words) { pdfPageWords(T, pg2.pdf).then(() => { toast('Text ready. Try again.', 1200); }); toast('Reading this page’s text…', 1500); return; }
+    const k = wordAtPt(words, wx, wy - S.layout.ys[pi2]);
+    S.act = { ...base, kind: 'ptext', pi: pi2, words, a: k, moved: false };
+    if (k >= 0) { S.ptext = { pi: pi2, words, a: k, b: k }; const bb = $('#ptbar'); if (bb) bb.hidden = true; }
+    else { S.ptext = null; const bb = $('#ptbar'); if (bb) bb.hidden = true; }
   } else if (tool === 'laser') {
     S.act = { ...base, kind: 'laser' }; pushLaser(wx, wy, true);
   } else if (tool === 'lasso') {
@@ -2004,6 +2016,10 @@ function feed(e, sx, sy) {
     a.wx = wx; a.wy = wy; eraseAt(wx, wy);
   } else if (a.kind === 'text' || a.kind === 'comment') {
     if (Math.hypot(sx - a.sx, sy - a.sy) > 12) a.moved = true;
+  } else if (a.kind === 'ptext') {
+    const k = wordAtPt(a.words, wx, wy - S.layout.ys[a.pi]);
+    if (a.a >= 0 && k >= 0) { S.ptext = { pi: a.pi, words: a.words, a: Math.min(a.a, k), b: Math.max(a.a, k) }; a.moved = true; }
+    else if (a.a < 0 && k >= 0) { a.a = k; S.ptext = { pi: a.pi, words: a.words, a: k, b: k }; }
   } else if (a.kind === 'laser') {
     pushLaser(wx, wy);
   } else if (a.kind === 'lasso') {
@@ -2502,6 +2518,8 @@ function finishAct() {
         redo() { for (const r of rec) { const i = r.pg.strokes.indexOf(r.o); if (i >= 0) r.pg.strokes.splice(i, 1, ...r.news); } },
       });
     }
+  } else if (a.kind === 'ptext') {
+    placePtBar();
   } else if (a.kind === 'comment') {
     if (!a.moved) {
       const hh = hitItem(a.wx, a.wy);
@@ -2949,14 +2967,127 @@ function paperPicker(initial, styles, withName) {
   paint();
   return { st, nodes: [h('div', { class: 'lbl' }, 'Paper'), sRow, h('div', { class: 'lbl' }, 'Line spacing'), spRow, h('div', { class: 'lbl' }, 'Line colour'), lcRow, h('div', { class: 'lbl' }, 'Colour'), cRow] };
 }
-function newDialog(type) {
+/* =====================================================================
+   Page templates: built-in, build-your-own table, and pages you saved
+   ===================================================================== */
+const tplDark = () => !!S.doc && S.doc.paper.color === 'dark';
+async function materializeTpl(rec) {
+  const tpl = rec.tpl ? structuredClone(rec.tpl) : null, strokes = structuredClone(rec.strokes || []), items = structuredClone(rec.items || []);
+  strokes.forEach((st) => { delete st.ts; });
+  for (const it of items) {
+    if (it.id) it.id = uid();
+    if ((it.k === 'img' || it.k === 'audio') && it.ref) {
+      const blob = await db.getAsset(it.ref).catch(() => null);
+      if (blob) { const nr = (it.k === 'audio' ? 'aud:' : 'img:') + uid(); await db.putAsset(nr, blob); it.ref = nr; }
+    }
+  }
+  return { tpl, strokes, items, h: rec.h || PH };
+}
+const builtRec = (t) => ({ id: t.id, name: t.name, h: PH, tpl: { ops: t.build() }, strokes: [], items: [] });
+async function applyTemplateHere(rec) {
+  const d = S.doc, m = await materializeTpl(rec);
+  if (isInf(d)) {
+    const p0 = d.pages[0], old = p0.tpl, ns = m.strokes.length, ni = m.items.length;
+    p0.tpl = m.tpl; p0.strokes.push(...m.strokes); p0.items.push(...m.items); baseDirty = true; requestFrame(true);
+    commit({
+      undo() { p0.tpl = old; m.strokes.forEach((s) => { const i = p0.strokes.indexOf(s); if (i >= 0) p0.strokes.splice(i, 1); }); m.items.forEach((s) => { const i = p0.items.indexOf(s); if (i >= 0) p0.items.splice(i, 1); }); baseDirty = true; },
+      redo() { p0.tpl = m.tpl; p0.strokes.push(...m.strokes); p0.items.push(...m.items); baseDirty = true; },
+    });
+    toast(rec.name + ' added to the board');
+  } else {
+    const pg = newPage(m.h, { tpl: m.tpl }); pg.strokes = m.strokes; pg.items = m.items;
+    const i = (S.curPage || 0) + 1; addPageAt(i, pg); scrollToPage(i);
+    toast(rec.name + ' added as page ' + (i + 1));
+  }
+}
+function tplCard(rec, onPick, onDel) {
+  const cv2 = h('canvas', { width: 150 });
+  if (rec.thumb) { const im = new Image(); im.onload = () => { cv2.height = Math.round(150 * im.height / im.width); cv2.getContext('2d').drawImage(im, 0, 0, 150, cv2.height); }; im.src = rec.thumb; }
+  else previewTpl(cv2, rec.tpl.ops, tplDark());
+  return h('div', { class: 'tplcard' }, h('button', { class: 'tplbtn', onclick: onPick, 'aria-label': rec.name }, cv2, h('span', {}, rec.name)),
+    onDel ? h('button', { class: 'tpldel', 'aria-label': 'Delete ' + rec.name, onclick: onDel }, icon('trash', 15)) : null);
+}
+/** shows the picker; resolves with a template record (or null). */
+function pickTemplate({ title = 'Templates', allowNone = false } = {}) {
+  return new Promise(async (res) => {
+    let done = false; const fin = (v) => { if (!done) { done = true; res(v); } };
+    const grid = h('div', { class: 'tplgrid' }), mine = h('div', { class: 'tplgrid' });
+    let close;
+    const pick = (r) => { fin(r); close(); };
+    const paintMine = async () => {
+      mine.innerHTML = ''; const list = (await db.listTpl().catch(() => [])).sort((a, b) => b.created - a.created);
+      mine.append(h('button', { class: 'tplcard tplnew', onclick: async () => { const r = await tableBuilder(); if (r) pick(r); else fin(undefined); } }, h('div', { class: 'tplplus' }, icon('plus', 26, 2)), h('span', {}, 'Build a table')));
+      for (const r of list) mine.append(tplCard(r, () => pick(r), async () => {
+        if (!(await confirmDlg('Delete “' + r.name + '”?', 'Notes already made from it are not affected.'))) return;
+        await db.delTpl(r.id, (r.items || []).filter((x) => x.ref && /^tplimg:/.test(x.ref)).map((x) => x.ref)); toast('Template deleted'); paintMine();
+      }));
+      if (!list.length) mine.append(h('p', { class: 'note tplhint' }, 'Nothing saved yet. Use ••• › Save this page as a template, or build a table.'));
+    };
+    for (const t of TEMPLATES) grid.append(tplCard(builtRec(t), () => pick(builtRec(t))));
+    await paintMine();
+    close = modal({ title, body: [h('div', { class: 'lbl' }, 'Built in'), grid, h('div', { class: 'lbl' }, 'Mine'), mine], actions: allowNone ? [{ label: 'No template', fn: () => fin(null) }, { label: 'Cancel', fn: () => fin(undefined) }] : [{ label: 'Cancel', fn: () => fin(undefined) }] });
+    $('#dlg').classList.add('wide'); $('#dlg').onclose = () => fin(undefined);
+  });
+}
+function tableBuilder() {
+  return new Promise((res) => {
+    let done = false; const fin = (v) => { if (!done) { done = true; res(v); } };
+    const ttl = h('input', { class: 'field', placeholder: 'Title (optional)', maxlength: 60, value: 'My table' });
+    const cols = h('input', { class: 'field', placeholder: 'Column names, separated by commas', value: 'Task, Owner, Due, Done?' });
+    const labels = h('textarea', { class: 'field', rows: 3, placeholder: 'Row names, one per line (optional)' });
+    const rows = h('input', { class: 'field', type: 'number', min: 1, max: 40, value: 12 });
+    const chk = h('input', { type: 'checkbox' }), keep = h('input', { type: 'checkbox', checked: true });
+    const pv = h('canvas', { width: 170, class: 'tblpv' });
+    const spec = () => ({ title: ttl.value.trim(), cols: cols.value.split(',').map((s) => s.trim()).filter(Boolean), rows: Math.max(1, Math.min(40, +rows.value || 10)), rowLabels: labels.value.split('\n').map((s) => s.trim()).filter(Boolean), checks: chk.checked });
+    const paint = () => previewTpl(pv, tableTemplate(spec()), tplDark());
+    [ttl, cols, labels, rows, chk].forEach((e) => e.addEventListener('input', paint)); paint();
+    modal({ title: 'Build a table', body: [h('div', { class: 'tblform' }, h('div', {}, h('div', { class: 'lbl' }, 'Title'), ttl, h('div', { class: 'lbl' }, 'Columns'), cols, h('div', { class: 'lbl' }, 'Rows'), rows, h('div', { class: 'lbl' }, 'Row names'), labels,
+      h('label', { class: 'chk' }, chk, 'Tick box on every row'), h('label', { class: 'chk' }, keep, 'Keep in My templates')), pv)],
+    actions: [{ label: 'Cancel', fn: () => fin(null) }, { label: 'Use', kind: 'primary', fn: () => {
+      const s = spec(), ops = tableTemplate(s);
+      const c2 = h('canvas', { width: 220 }); previewTpl(c2, ops, false);
+      const rec = { id: 'tpl' + uid(), name: s.title || 'Table', created: Date.now(), h: PH, tpl: { ops }, strokes: [], items: [], thumb: c2.toDataURL('image/png') };
+      if (keep.checked) db.putTpl(rec);
+      fin(rec);
+    } }] });
+    $('#dlg').onclose = () => fin(null);
+  });
+}
+async function saveTemplateFromPage() {
+  const d = S.doc, i = S.curPage || 0, pg = d.pages[i];
+  if (!pg || pg.pdf != null) return toast('PDF pages can’t be saved as templates');
+  const name = await ask('Save this page as a template', 'My template ' + new Date().toLocaleDateString('en', { month: 'short', day: 'numeric' }), 'Save'); if (!name) return;
+  try {
+    const rec = { id: 'tpl' + uid(), name, created: Date.now(), h: isInf(d) ? PH : pg.h, tpl: pg.tpl ? structuredClone(pg.tpl) : null, strokes: structuredClone(pg.strokes), items: structuredClone(pg.items || []) };
+    rec.strokes.forEach((st) => { delete st.ts; });
+    for (const it of rec.items) {
+      if (it.id) it.id = uid();
+      if ((it.k === 'img' || it.k === 'audio') && it.ref) { const blob = await db.getAsset(it.ref).catch(() => null); if (blob) { const nr = 'tplimg:' + uid(); await db.putAsset(nr, blob); it.ref = nr; } }
+    }
+    const c = await renderPageCanvas(i, 240); rec.thumb = c.toDataURL('image/jpeg', 0.7);
+    await db.putTpl(rec); toast('Saved. Find it under Templates › Mine.');
+  } catch (e) { console.error(e); toast('Couldn’t save the template'); }
+}
+async function templatesDialog() {
+  const r = await pickTemplate({ title: isInf(S.doc) ? 'Board template' : 'Add a template page' }); if (r) applyTemplateHere(r);
+}
+function newDialog(type, keep) {
   const styles = type === 'whiteboard' ? [['dots', 'Dots'], ['grid', 'Grid'], ['blank', 'Blank']] : [['ruled', 'Ruled'], ['grid', 'Grid'], ['dots', 'Dots'], ['cornell', 'Cornell'], ['music', 'Music'], ['blank', 'Blank']];
-  const title = h('input', { class: 'field', value: type === 'notebook' ? 'Untitled notebook' : 'Whiteboard', maxlength: 80 });
-  const pk = paperPicker({ style: type === 'whiteboard' ? 'dots' : 'ruled', color: 'white' }, styles);
-  modal({ title: type === 'notebook' ? 'New notebook' : 'New whiteboard', body: [h('div', { class: 'lbl' }, 'Name'), title, ...pk.nodes], actions: [
+  const title = h('input', { class: 'field', value: keep ? keep.title : type === 'notebook' ? 'Untitled notebook' : 'Whiteboard', maxlength: 80 });
+  const pk = paperPicker(keep ? keep.st : { style: type === 'whiteboard' ? 'dots' : 'ruled', color: 'white' }, styles);
+  let chosen = keep ? keep.chosen : null;
+  const tbtn = h('button', { class: 'chip' + (chosen ? ' on' : ''), type: 'button', onclick: async () => {
+    const snap = { title: title.value, st: { ...pk.st }, chosen };
+    $('#dlg').close();
+    const r = await pickTemplate({ title: 'Start from a template', allowNone: true });
+    snap.chosen = r === undefined ? snap.chosen : r; newDialog(type, snap);
+  } }, chosen ? chosen.name : 'None');
+  modal({ title: type === 'notebook' ? 'New notebook' : 'New whiteboard', body: [h('div', { class: 'lbl' }, 'Name'), title, h('div', { class: 'lbl' }, 'Template'), h('div', { class: 'tagwrap' }, tbtn), ...pk.nodes], actions: [
     { label: 'Cancel' },
     { label: 'Create', kind: 'primary', fn: async () => {
-      const doc = makeDoc({ type, title: title.value.trim() || 'Untitled', paper: { style: pk.st.style, color: pk.st.color, sp: pk.st.sp, lc: pk.st.lc } });
+      const blank = chosen && type === 'notebook';           // a template brings its own lines
+      const doc = makeDoc({ type, title: title.value.trim() || 'Untitled', paper: { style: blank ? 'blank' : pk.st.style, color: pk.st.color, sp: pk.st.sp, lc: pk.st.lc } });
+      if (chosen) { const m = await materializeTpl(chosen), p0 = doc.pages[0]; p0.tpl = m.tpl; p0.strokes = m.strokes; p0.items = m.items; if (type === 'notebook') p0.h = m.h; }
       await db.saveDoc(doc, { id: doc.id, title: doc.title, type, updated: doc.updated, pages: 1, thumb: null, parent: L.folder });
       await refreshLibrary(); openDoc(doc.id);
     } }] });
@@ -2983,14 +3114,21 @@ async function importPdf(file) {
     const task = pdfjs.getDocument({ data: new Uint8Array(buf), isEvalSupported: false });
     const pdf = await task.promise;
     const sizes = new Array(pdf.numPages);
-    for (let i = 0; i < pdf.numPages; i += 12) {     // page sizes in small parallel batches, never all at once
+    // Open fast: measure the first, middle and last page. If they agree, the rest are assumed equal and measured later in the background.
+    const probe = async (n) => { const pg = await pdf.getPage(n + 1), v = pg.getViewport({ scale: 1 }); pg.cleanup(); return Math.round(PW * v.height / v.width); };
+    let est = false;
+    if (pdf.numPages > 12) {
+      const [p0, p1, p2] = await Promise.all([probe(0), probe(pdf.numPages >> 1), probe(pdf.numPages - 1)]);
+      if (Math.abs(p0 - p1) <= 2 && Math.abs(p0 - p2) <= 2) { sizes.fill(p0); est = true; }
+    }
+    for (let i = 0; !est && i < pdf.numPages; i += 12) {     // page sizes in small parallel batches, never all at once
       await Promise.all(Array.from({ length: Math.min(12, pdf.numPages - i) }, async (_, k) => {
         const pg = await pdf.getPage(i + k + 1), v = pg.getViewport({ scale: 1 });
         sizes[i + k] = Math.round(PW * v.height / v.width); pg.cleanup();
       }));
       if (pdf.numPages > 24) toast(`Importing PDF… ${Math.min(100, Math.round((i + 12) / pdf.numPages * 100))}%`, 10000);
     }
-    const pages = sizes.map((h2, i) => newPage(h2, { pdf: i }));
+    const pages = sizes.map((h2, i) => newPage(h2, est ? { pdf: i, est: 1 } : { pdf: i }));
     const doc = makeDoc({ type: 'pdf', title: file.name.replace(/\.pdf$/i, '') || 'PDF', paper: { style: 'blank', color: 'white' } });
     doc.id = id; doc.pages = pages;
     await db.saveDoc(doc, { id: doc.id, title: doc.title, type: 'pdf', updated: doc.updated, pages: pages.length, thumb: null, parent: L.folder });
@@ -3222,6 +3360,7 @@ async function showEditor(T) {
   clampView();
   if (!PANE && (!history.state || !history.state.editor)) history.pushState({ editor: T.id }, '');
   requestFrame(true);
+  updateReadChip(); refinePdfSizes(T);
   if (S.pendingFind && S.pendingFind.id === T.id) { const q = S.pendingFind.q; S.pendingFind = null; setTimeout(() => openFind(q), 300); }
 }
 function showHome() {
@@ -3308,6 +3447,7 @@ function curTool() {
   return S.tools[S.tool] || null;
 }
 function setTool(k) {
+  if (k !== 'ptext' && S.ptext) { S.ptext = null; const pb = $('#ptbar'); if (pb) pb.hidden = true; }
   if (S.tool !== k && k !== 'eraser') S.prevTool = null;
   commitEditor(); closeComment();
   S.tool = k; if (S.sel && k !== 'lasso') clearSel();
@@ -3321,8 +3461,8 @@ function syncDock() {
   const t = curTool(), sw = $('#swBtn');
   if (!sw) return;
   sw.style.background = t && t.c ? t.c : 'var(--panel2)';
-  const noSize = ['hand', 'lasso', 'insert', 'comment'].includes(S.tool);
-  sw.style.visibility = ['hand', 'lasso', 'insert', 'comment'].includes(S.tool) ? 'hidden' : 'visible';
+  const noSize = ['hand', 'lasso', 'insert', 'comment', 'ptext'].includes(S.tool);
+  sw.style.visibility = ['hand', 'lasso', 'insert', 'comment', 'ptext'].includes(S.tool) ? 'hidden' : 'visible';
   if (S.tool === 'laser') sw.style.background = S.laserC;
   const qs = $('#qsBtn'), dot = $('#qsDot');
   if (qs && dot) {
@@ -3485,6 +3625,7 @@ function openPop(kind) {
       ...sec('Tools',
         insBtn('ruler', S.ruler ? 'Hide ruler' : 'Ruler', () => { closePop(); if (S.ruler) S.ruler = null; else { const [wx, wy] = toWorld(vw / 2, vh / 2); S.ruler = { x: wx, y: wy, a: 0 }; toast('Draw along the edge for straight lines. Drag the ruler to move it.', 2800); } requestFrame(); }),
         insBtn('search', S.zw ? 'Close zoom' : 'Zoom', () => { closePop(); openZoom(); }),
+        S.pdf ? insBtn('text', 'Select text', () => { closePop(); startPtext(); }) : null,
         insBtn('plus', 'Page', () => { closePop(); if (isInf(S.doc)) return toast('Whiteboards are one endless page'); const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); }))));
     return;
   }
@@ -3904,7 +4045,9 @@ function openMenu() {
   item('search', 'Find in note', () => openFind(''));
   item('tag', 'Tags and links', linksDialog);
   if (d.type !== 'pdf') item('paper', d.type === 'whiteboard' ? 'Background' : 'Paper style', paperDialog);
+  if (d.type !== 'pdf') item('pages', paged ? 'Add template page…' : 'Board template…', templatesDialog);
   if (paged) item('plus', 'Add page after this', () => { const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); });
+  if (d.type !== 'pdf') item('bookmark', 'Save this page as a template', saveTemplateFromPage);
   item('fit', 'Fit to screen', () => { const t = {}; const keep = { ...S.view }; fitView(); Object.assign(t, S.view); S.view = keep; animateView(t, 280); });
   item('present', 'Present', startPresent);
   item('focus', 'Focus mode', () => { document.body.classList.add('focus'); setTimeout(resize, 30); toast('Tap the corner button to leave focus mode', 2200); });
@@ -4094,6 +4237,17 @@ function searchPane(repaint) {
       [['auto', 'Automatic'], ['off', 'Off']], () => prefs.get('ocr', 'auto'), (v) => { prefs.set('ocr', v); if (v !== 'off') Indexer.scanAll(L.metas); }),
     seg('Languages', 'Reading both takes a little longer per page', [['eng+vie', 'English + Vietnamese'], ['eng', 'English'], ['vie', 'Vietnamese']], ocrLangs, (v) => { prefs.set('ocrLangs', v); ocr.setLangs(v); Indexer.scanAll(L.metas); }),
     st,
+    (() => {
+      const out = h('small', {}, Indexer.status.err ? 'Last problem: ' + Indexer.status.err : 'Reads a picture of known words and shows what it got, and how long it took.');
+      return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Test the reader', out),
+        h('div', { class: 'segs mini' }, h('button', { class: 'seg', onclick: async (e) => {
+          const btn = e.currentTarget; btn.textContent = 'Testing…'; out.textContent = 'First run downloads the reader (about 9 MB)…';
+          try { ocr.setLangs('eng+vie'); const r = await ocr.selfTest(); out.textContent = `Worked in ${r.ms} ms. It read: “${r.text}”`; Indexer.status.err = ''; }
+          catch (err) { out.textContent = 'Failed: ' + String(err.message || err); }
+          ocr.setLangs(ocrLangs()); btn.textContent = 'Run test';
+        } }, 'Run test')));
+    })(),
+    seg('Read this note now', 'Skips the short wait, then searches it', [['go', 'Read now']], () => '', () => { if (S.doc) { Indexer.urgent(S.doc.id); toast('Reading this note…'); } else toast('Open a note first'); }),
     h('p', { class: 'note' }, 'Handwriting is read by an on-device engine made for print. Neat, separated letters work best; joined-up cursive and very small writing are often missed, so a search may not find every word. Nothing leaves this device. The reader files (about 9 MB) download the first time you use it, then work offline.'),
   ];
 }
@@ -4390,8 +4544,10 @@ for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'
 async function pace() {
   for (;;) {
     let low = false; try { const b = navigator.getBattery && await navigator.getBattery(); low = !!b && !b.charging && b.level < 0.2; } catch {}
-    if (!document.hidden && !S.act && Date.now() - lastInput > 3000 && !low) return;
-    await new Promise((r) => setTimeout(r, document.hidden ? 4000 : low ? 30000 : 700));
+    // the note you have open is read as soon as you pause; other notes wait for a longer quiet; "read now" does not wait
+    const need = Date.now() < Indexer.urgentUntil ? 0 : (S.doc && Indexer.curId === S.doc.id) ? 1100 : 3500;
+    if ((!document.hidden || Date.now() < Indexer.urgentUntil) && !S.act && Date.now() - lastInput > need && !low) return;
+    await new Promise((r) => setTimeout(r, document.hidden ? 4000 : low ? 30000 : 350));
   }
 }
 async function openPdfFor(id) {
@@ -4402,20 +4558,155 @@ async function openPdfFor(id) {
 const ocrOn = () => prefs.get('ocr', 'auto') !== 'off' && ocr.ocrSupported();
 const ocrLangs = () => prefs.get('ocrLangs', 'eng+vie');
 const rowsOf = (it) => textLayout(it).rows.map((r) => [r.parts.map((p) => p.t).join(''), TP + r.y, r.lh]);
+/* a small chip so you can see handwriting being read */
+let chipT = 0, chipLast = '';
+function updateReadChip() {
+  let c = $('#readchip');
+  if (!c) { c = h('button', { id: 'readchip', class: 'readchip', hidden: true, onclick: () => { settingsTabOpen('search'); } }); ($('#main') || document.body).append(c); }
+  const st = Indexer.status, mine = S.doc && Indexer.curId === S.doc.id && Indexer.running;
+  clearTimeout(chipT);
+  if (S.doc && st.err && ocrOn()) { c.hidden = false; c.className = 'readchip bad'; c.replaceChildren(icon('x', 14), h('span', {}, 'Reader problem. Tap for details')); return; }
+  if (mine) { c.hidden = false; c.className = 'readchip busy'; c.replaceChildren(h('i', { class: 'spin' }), h('span', {}, 'Reading handwriting' + (st.page ? ' · ' + st.page.split(' ').pop() : '') + '…')); chipLast = 'busy'; return; }
+  if (chipLast === 'busy' && S.doc) { chipLast = ''; c.hidden = false; c.className = 'readchip ok'; c.replaceChildren(icon('search', 14), h('span', {}, 'Searchable')); chipT = setTimeout(() => { c.hidden = true; }, 2200); return; }
+  c.hidden = true;
+}
+function settingsTabOpen(tab) { setTab = tab; settingsDialog(); }
 function startIndexer() {
   if (PANE) return;
   ocr.setLangs(ocrLangs());
   Indexer.opts = { rectOf: (it) => itemRect(it), rowsOf, pace, openPdf: openPdfFor, renderPdf: renderPdfBitmap, ocrOn, langs: ocrLangs };
+  Indexer.listeners.add(updateReadChip);
   Indexer.listeners.add(() => { if (S.find) { clearTimeout(startIndexer.t); startIndexer.t = setTimeout(() => doFind(false), 600); } });
   Indexer.load().then(() => setTimeout(() => Indexer.scanAll(L.metas), 3500));
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}      // ask the browser not to evict our data
+}
+
+/* =====================================================================
+   PDF text: find, select, copy, highlight. Page text is read lazily, one page at a time,
+   only for pages you touch (or while a search is running), never for the whole file up front.
+   ===================================================================== */
+function pdfPageWords(T, idx) {
+  T.pdfText ||= new Map(); T.pdfWords ||= new Map();
+  if (T.pdfText.has(idx)) return T.pdfText.get(idx);
+  const p = (async () => {
+    const page = await T.pdf.getPage(idx + 1), v0 = page.getViewport({ scale: 1 }), sc = PW / v0.width, tc = await page.getTextContent(), words = [];
+    for (const t of tc.items) {
+      if (!t.str || !t.str.trim()) continue;
+      const tr = t.transform, hh = Math.max(6, (t.height || Math.abs(tr[3]) || 10) * sc), x0 = tr[4] * sc, y0 = (v0.height - tr[5]) * sc - hh * 0.82, W = (t.width || 0) * sc, n = t.str.length;
+      for (const m of t.str.matchAll(/\S+/g)) words.push({ t: m[0], x: x0 + W * m.index / n, y: y0, w: Math.max(2, W * m[0].length / n), h: hh * 1.15 });
+      if (t.hasEOL && words.length) words[words.length - 1].eol = true;
+    }
+    page.cleanup(); T.pdfWords.set(idx, words); return words;
+  })().catch(() => { T.pdfWords.set(idx, []); return []; });
+  T.pdfText.set(idx, p); return p;
+}
+function wordLines(words) {          // words -> lines of text with a box each
+  const lines = []; let cur = null;
+  for (const w of words) {
+    if (cur && Math.abs((w.y + w.h / 2) - (cur.y + cur.h / 2)) < cur.h * 0.55 && w.x >= cur.x - 4) { cur.t += ' ' + w.t; cur.w = Math.max(cur.w, w.x + w.w - cur.x); cur.y = Math.min(cur.y, w.y); cur.h = Math.max(cur.h, w.h); }
+    else { cur = { t: w.t, x: w.x, y: w.y, w: w.w, h: w.h }; lines.push(cur); }
+  }
+  return lines.map((l) => [l.t, Math.round(l.x), Math.round(l.y), Math.round(l.w), Math.round(l.h)]);
+}
+let pdfWarmT = null;
+async function pdfWarm(T) {              // read every page's text, a few at a time, for a search in a big PDF
+  if (!T.pdf || T.pdfWarmed || pdfWarmT === T) return;
+  pdfWarmT = T; const pages = T.doc.pages.map((p) => p.pdf).filter((x) => x != null);
+  try {
+    for (let i = 0; i < pages.length && S.find && S.tab === T; i += 4) {
+      await Promise.all(pages.slice(i, i + 4).map((ix) => pdfPageWords(T, ix)));
+      T.pdfDone = Math.min(pages.length, i + 4); if (S.find) doFind(false);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    if (S.tab === T && T.pdfDone >= pages.length) {
+      T.pdfWarmed = true;
+      const e = Indexer.mem.get(T.id);                 // keep what we read, so the library search finds this PDF too
+      if (e) { T.doc.pages.forEach((pg, pi) => { if (pg.pdf != null && e.pages[pi]) { e.pages[pi].f = wordLines(T.pdfWords.get(pg.pdf) || []); e.pages[pi].ps = 'p'; } }); db.putIdx(e).catch(() => {}); }
+    }
+  } finally { pdfWarmT = null; if (S.find) doFind(false); }
+}
+/* ---- select text tool (Insert > Select text, PDF only) ---- */
+function wordAtPt(words, x, y) {
+  let best = -1, bd = 1e9;
+  words.forEach((w, i) => { const dx = x < w.x ? w.x - x : x > w.x + w.w ? x - w.x - w.w : 0, dy = y < w.y ? w.y - y : y > w.y + w.h ? y - w.y - w.h : 0, d = Math.hypot(dx, dy * 1.3); if (d < bd) { bd = d; best = i; } });
+  return bd < 26 ? best : -1;
+}
+function ptSelText() {
+  const p = S.ptext; if (!p) return '';
+  let out = '', prev = null;
+  for (let i = p.a; i <= p.b; i++) { const w = p.words[i]; if (prev && (prev.eol || Math.abs(prev.y - w.y) > prev.h * 0.6)) out += '\n'; else if (prev) out += ' '; out += w.t; prev = w; }
+  return out;
+}
+function ptBar() {
+  let b = $('#ptbar');
+  if (!b) {
+    const bt = (ic, l, fn) => h('button', { onclick: fn }, icon(ic, 18), h('span', {}, l));
+    b = h('div', { id: 'ptbar', class: 'ptbar', hidden: true },
+      bt('copy', 'Copy', async () => { const t = ptSelText(); try { await navigator.clipboard.writeText(t); } catch { const ta = h('textarea', { style: 'position:fixed;opacity:0' }, t); document.body.append(ta); ta.select(); try { document.execCommand('copy'); } catch {} ta.remove(); } toast('Copied ' + t.split(/\s+/).length + ' words'); }),
+      bt('hl', 'Highlight', () => ptHighlight()),
+      bt('search', 'Find', () => { const t = ptSelText().replace(/\s+/g, ' ').slice(0, 80); endPtext(false); openFind(t); }),
+      bt('check', 'Done', () => endPtext(true)));
+    ($('#main') || document.body).append(b);
+  }
+  return b;
+}
+function placePtBar() {
+  const p = S.ptext, b = ptBar(); if (!p || p.b < p.a) { b.hidden = true; return; }
+  const w = p.words[p.a], { s, x, y } = S.view, sx = (w.x + w.w / 2) * s + x, sy = (S.layout.ys[p.pi] + w.y) * s + y;
+  b.hidden = false; const bw = b.offsetWidth || 280;
+  b.style.left = clamp(sx - bw / 2, 8, vw - bw - 8) + 'px'; b.style.top = Math.max(8, sy - 58) + 'px';
+}
+function ptHighlight() {
+  const p = S.ptext; if (!p) return;
+  const pg = S.doc.pages[p.pi], lines = [];
+  for (let i = p.a; i <= p.b; i++) { const w = p.words[i], l = lines[lines.length - 1]; if (l && Math.abs(l.y - w.y) < w.h * 0.6) { l.x1 = Math.max(l.x1, w.x + w.w); l.x0 = Math.min(l.x0, w.x); } else lines.push({ x0: w.x, x1: w.x + w.w, y: w.y, h: w.h }); }
+  const T = S.tools.hl, strokes = lines.map((l) => ({ t: 'hl', c: T.c, s: l.h * 0.92, vp: false, p: [l.x0 - 1, l.y + l.h / 2, 0.5, l.x1 + 1, l.y + l.h / 2, 0.5] }));
+  actAddObjs(pg, strokes); changed(); buzz(10); toast('Highlighted'); endPtext(true);
+}
+function endPtext(leave) {
+  S.ptext = null; const b = $('#ptbar'); if (b) b.hidden = true; requestFrame();
+  if (leave && S.tool === 'ptext') setTool(S.ptPrev && S.ptPrev !== 'ptext' ? S.ptPrev : 'pen');
+}
+function startPtext() {
+  if (!S.pdf) return toast('Select text works on PDF pages');
+  S.ptPrev = S.tool; setTool('ptext'); toast('Drag over the text. Tap a word to pick it.', 2600);
+  const T = S.tab, wy = (-S.view.y + vh / 2) / S.view.s, pi = pageAt(wy), pg = S.doc.pages[pi]; if (pg && pg.pdf != null) pdfPageWords(T, pg.pdf);
+}
+function drawPtext(ctx, s) {
+  const p = S.ptext; if (!p) return;
+  ctx.save(); ctx.fillStyle = 'rgba(59,91,219,.30)'; ctx.strokeStyle = 'rgba(59,91,219,.55)'; ctx.lineWidth = 1 / s;
+  const top = S.layout.ys[p.pi];
+  for (let i = p.a; i <= p.b; i++) { const w = p.words[i]; ctx.beginPath(); ctx.roundRect(w.x - 1, top + w.y, w.w + 2, w.h, 3 / s); ctx.fill(); ctx.stroke(); }
+  ctx.restore();
+}
+
+/* page sizes of a freshly opened big PDF are measured quietly in the background */
+async function refinePdfSizes(T) {
+  if (!T.pdf || !T.doc.pages.some((p) => p.est)) return;
+  let changedAny = false;
+  const todo = T.doc.pages.filter((p) => p.est);
+  for (let i = 0; i < todo.length; i += 6) {
+    if (S.tab !== T) return;
+    await pace();
+    await Promise.all(todo.slice(i, i + 6).map(async (pg) => {
+      try { const page = await T.pdf.getPage(pg.pdf + 1), v = page.getViewport({ scale: 1 }), h2 = Math.round(PW * v.height / v.width); page.cleanup(); if (Math.abs(h2 - pg.h) > 1) { pg.h = h2; changedAny = true; } } catch {}
+      delete pg.est;
+    }));
+    if (changedAny && S.tab === T) {
+      const cy = (vh / 2 - S.view.y) / S.view.s, pi = pageAt(cy), off = cy - S.layout.ys[pi];
+      relayout(); S.view.y = vh / 2 - (S.layout.ys[pi] + off) * S.view.s; clampView(); baseDirty = true; requestFrame(true); changedAny = false;
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  if (S.tab === T) changed();
 }
 
 /* ---- find in this note ---- */
 function findHits(q) {
   const d = S.doc; if (!d || !tokens(q).length) return [];
   const idx = Indexer.mem.get(d.id);
-  const pages = d.pages.map((pg, pi) => { const ip = (idx && (idx.pages.find((p) => p.id === pg.id) || idx.pages[pi])) || {}; return { e: typedOf(pg, itemRect, rowsOf), f: ip.f || [], i: ip.i || [], m: ip.m || [] }; });
+  const T = S.tab;
+  const pages = d.pages.map((pg, pi) => { const ip = (idx && (idx.pages.find((p) => p.id === pg.id) || idx.pages[pi])) || {}; const live = pg.pdf != null && T && T.pdfWords && T.pdfWords.get(pg.pdf); return { e: typedOf(pg, itemRect, rowsOf), f: live ? wordLines(live) : (ip.f || []), i: ip.i || [], m: ip.m || [] }; });
   const ys = S.layout.ys;
   return searchEntry({ pages }, q).map((x) => ({ ...x, wy: (ys[x.pi] || 0) + x.y, wx: x.x })).sort((a, b) => a.pi - b.pi || a.wy - b.wy || a.wx - b.wx);
 }
@@ -4436,6 +4727,7 @@ function openFind(q = '') {
   closePop(); closeMenu(); clearSel();
   const b = ensureFindBar(); b.hidden = false;
   S.find = { q, hits: [], i: -1 };
+  if (!PANE && Indexer.opts && ocrOn()) { const e = Indexer.mem.get(S.doc.id); if (!e || e.pending || e.updated < (S.doc.updated || 0)) Indexer.urgent(S.doc.id); }
   const inp = b.querySelector('input'); inp.value = q; setTimeout(() => { inp.focus(); inp.select(); }, 30);
   doFind(!!q);
 }
@@ -4445,8 +4737,10 @@ function doFind(jump) {
   const keep = f.hits[f.i];
   f.hits = findHits(f.q);
   f.i = f.hits.length ? (keep ? Math.max(0, f.hits.findIndex((x) => x.pi === keep.pi && x.x === keep.x && x.y === keep.y)) : (jump ? 0 : -1)) : -1;
-  const busy = S.doc && (Indexer.queue.includes(S.doc.id) || Indexer.running);
-  cnt.textContent = !tokens(f.q).length ? '' : f.hits.length ? (f.i >= 0 ? f.i + 1 : '–') + ' / ' + f.hits.length : busy ? 'Reading handwriting…' : 'No matches';
+  const busy = S.doc && (Indexer.queue.includes(S.doc.id) || Indexer.running), T = S.tab, np = S.doc.pages.filter((p) => p.pdf != null).length, pdfBusy2 = T && T.pdf && !T.pdfWarmed && np > 0;
+  if (pdfBusy2 && tokens(f.q).length) pdfWarm(T);
+  const prog = pdfBusy2 ? ' · PDF ' + (T.pdfDone || 0) + '/' + np : '';
+  cnt.textContent = !tokens(f.q).length ? '' : f.hits.length ? (f.i >= 0 ? f.i + 1 : '–') + ' / ' + f.hits.length + prog : pdfBusy2 ? 'Searching PDF ' + (T.pdfDone || 0) + '/' + np + '…' : busy ? 'Reading handwriting…' : 'No matches';
   if (jump && f.hits.length) { if (f.i < 0) f.i = 0; gotoHit(f.i, true); }
   requestFrame();
 }
@@ -4458,7 +4752,7 @@ function gotoHit(i, quiet) {
   requestFrame();
 }
 const stepFind = (d) => { const f = S.find; if (f && f.hits.length) gotoHit((f.i < 0 ? (d > 0 ? 0 : -1) : f.i + d)); };
-function closeFind() { S.find = null; const b = $('#findbar'); if (b) b.hidden = true; requestFrame(); }
+function closeFind() { S.find = null; pdfWarmT = null; const b = $('#findbar'); if (b) b.hidden = true; requestFrame(); }
 function drawFindHits(ctx, s) {
   const f = S.find; if (!f || !f.hits.length) return;
   const vis = [-S.view.x / s, -S.view.y / s, (vw - S.view.x) / s, (vh - S.view.y) / s];

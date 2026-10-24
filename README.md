@@ -62,6 +62,12 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.14
+- **Templates.** Nine built in (weekly, daily, monthly calendar, meeting notes, to-do, study notes, habit tracker, meal planner, board). Start a notebook or whiteboard from one, or use ••• › Add template page. Templates are a drawing layer under your ink, so they never get selected or erased by accident, stay sharp at any zoom and follow dark paper.
+- **Your own templates.** "Build a table" (title, columns, rows, row names, tick boxes) and ••• › Save this page as a template (keeps ink, text and pictures). They live under Templates › Mine and are included in backups.
+- **PDF.** Find in a PDF reads pages a few at a time while you search (no scan on open); Insert › Select text lets you drag over words, then Copy, Highlight or Find. Opening a long PDF is quicker: page sizes are measured in the background.
+- **Handwriting reader.** Reads only the paragraphs you changed, starts sooner, shows a "Reading handwriting…" chip, and Settings › Search has "Run test" and "Read now" so you can see it work.
+
 ## What's new in 3.13
 - **Backup and restore** (Settings > Backup): one `.anota` file with every note, folder, PDF, picture, recording, the Trash and your settings. Add-to-my-notes (newest edit wins) or Replace-everything restore. Share to Drive from the share sheet. Asks the browser to protect the data from automatic clean-up.
 - **Search inside notes**: the library search now finds typed text, PDF text, handwriting and text inside pictures, with a snippet and the page number; tapping a result opens the note on the match.
