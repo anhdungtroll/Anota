@@ -3,13 +3,14 @@
 //  docs   : pages, strokes, objects
 //  pdfs   : original PDF bytes
 //  assets : images attached to notes
+//  idx    : search index per note (typed text, recognised handwriting, text inside pictures)
 let dbp;
 function open() {
   return (dbp ||= new Promise((res, rej) => {
-    const r = indexedDB.open('inknote', 2);
+    const r = indexedDB.open('inknote', 3);
     r.onupgradeneeded = () => {
       const d = r.result;
-      for (const n of ['meta', 'docs']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
+      for (const n of ['meta', 'docs', 'idx']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
       for (const n of ['pdfs', 'assets']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n);
     };
     r.onsuccess = () => res(r.result);
@@ -45,4 +46,15 @@ export const db = {
     m.delete(id); d.delete(id); return p.delete(id);
   }),
   removeMeta: (id) => run(['meta'], 'readwrite', (m) => m.delete(id)),
+  // search index
+  listIdx: () => run(['idx'], 'readonly', (x) => x.getAll()),
+  getIdx: (id) => run(['idx'], 'readonly', (x) => x.get(id)),
+  putIdx: (e) => run(['idx'], 'readwrite', (x) => x.put(e)),
+  delIdx: (id) => run(['idx'], 'readwrite', (x) => x.delete(id)),
+  clearIdx: () => run(['idx'], 'readwrite', (x) => x.clear()),
+  // raw access for backup / restore
+  keys: (store) => run([store], 'readonly', (s) => s.getAllKeys()),
+  getRaw: (store, key) => run([store], 'readonly', (s) => s.get(key)),
+  putRaw: (store, key, val) => run([store], 'readwrite', (s) => (s.keyPath ? s.put(val) : s.put(val, key))),
+  clearAll: () => run(['meta', 'docs', 'pdfs', 'assets', 'idx'], 'readwrite', (...ss) => { ss.forEach((s) => s.clear()); }),
 };

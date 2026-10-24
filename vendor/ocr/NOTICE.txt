@@ -1,0 +1,2 @@
+Text engine: tesseract.js-core (Apache-2.0), see LICENSE-tesseract.js-core.txt.
+Language data: tessdata_fast eng.traineddata, vie.traineddata (Apache-2.0), https://github.com/tesseract-ocr/tessdata_fast

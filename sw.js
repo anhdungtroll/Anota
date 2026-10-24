@@ -1,7 +1,7 @@
 // Anota service worker: network-first so updates always arrive when online, cache fallback for offline use.
-const VERSION = 'anota-v17';
+const VERSION = 'anota-v19';
 const ASSETS = [
-  './', 'index.html', 'styles.css', 'app.js', 'db.js', 'pdfout.js', 'docx.js', 'polyfills.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'db.js', 'ocr.js', 'ocr-worker.js', 'search.js', 'backup.js', 'pdfout.js', 'docx.js', 'polyfills.js', 'manifest.webmanifest',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/favicon-64.png',
 ];
 
@@ -38,6 +38,7 @@ self.addEventListener('fetch', (e) => {
   // cache first (instant start), refresh in the background so the next launch has the newest files
   e.respondWith((async () => {
     const hit = await caches.match(req, { ignoreSearch: true });
+    if (hit && url.pathname.includes('/vendor/')) return hit;       // big engine/language files never change: no background re-download
     const refresh = fetch(req).then((res) => { if (res && res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); } return res; });
     if (hit) { refresh.catch(() => {}); return hit; }
     try { return await refresh; } catch {

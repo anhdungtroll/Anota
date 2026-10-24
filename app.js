@@ -1,6 +1,9 @@
 import './polyfills.js';
 import { db } from './db.js';
 import { buildPdf } from './pdfout.js';
+import * as ocr from './ocr.js';
+import { Indexer, searchEntry, typedOf, tokens, norm } from './search.js';
+import { exportAll, inspect, restore } from './backup.js';
 
 let pdfjsP = null;
 // pdf.js is large: load it only when a PDF (or converted Word file) is actually opened
@@ -57,6 +60,10 @@ const IC = {
   book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z',
   down: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
   x: 'M18 6 6 18M6 6l12 12',
+  chevUp: 'm18 15-6-6-6 6',
+  chevDown: 'm6 9 6 6 6-6',
+  shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
+  upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
   check: 'M20 6 9 17l-5-5',
   search: 'M21 21l-4.3-4.3M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z',
   edit: 'M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z',
@@ -178,7 +185,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.12 (build 1)';
+const APP_VERSION = '3.13 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -830,6 +837,7 @@ function frame() {
     ctx.strokeStyle = '#3b5bdb'; ctx.lineWidth = 2.4; ctx.stroke(P2);
     ctx.restore();
   }
+  if (S.find) drawFindHits(ctx, s);
   if (S.ruler) drawRuler(ctx, s);
   drawMinimap();
   if (S.laser.length || S.tool === 'laser') drawLaser(ctx, s);
@@ -2556,6 +2564,7 @@ async function saveNow() {
   const meta = { ...(old || {}), id: d.id, title: d.title, type: d.type, updated: d.updated, created: (old && old.created) || d.created || d.updated, pages: d.pages.length, thumb: S.thumb, parent: old ? old.parent ?? null : null, links: docLinks(d) };
   try { await db.saveDoc(d, meta); } catch (e) { console.error(e); toast('Could not save. Storage may be full.'); return; }
   try { if (syncBc) syncBc.postMessage({ id: d.id, from: SELF }); } catch {}
+  if (!PANE && Indexer.opts) Indexer.enqueue(d.id);
 }
 const docLinks = (d) => {
   const out = new Map();
@@ -2692,7 +2701,7 @@ function renderLibrary(animate = false) {
 
   let list;
   const alive = L.metas.filter((m) => !m.trashed), qq = L.q.replace(/^#/, '');
-  const hitQ = (m) => m.title.toLowerCase().includes(L.q) || (m.tags || []).some((t) => t.includes(qq));
+  const nq = norm(L.q), hitQ = (m) => norm(m.title).includes(nq) || (m.tags || []).some((t) => t.includes(qq)) || !!(L.idxHits && L.idxHits.has(m.id));
   if (L.filter === 'trash') list = L.metas.filter((m) => m.trashed && !(m.parent && byId(m.parent) && byId(m.parent).trashed === m.trashed) && (!L.q || hitQ(m)));
   else if (L.q || L.tag) list = alive.filter((m) => (!L.q || hitQ(m)) && (L.filter === 'all' || m.type === L.filter) && (!L.tag || (!isFolder(m) && (m.tags || []).includes(L.tag))));
   else if (L.filter !== 'all') list = alive.filter((m) => m.type === L.filter);
@@ -2723,14 +2732,15 @@ function renderLibrary(animate = false) {
     }
     const label = { notebook: 'NOTEBOOK', whiteboard: 'BOARD', pdf: 'PDF' }[m.type];
     const inFolder = (L.q || L.filter !== 'all') && m.parent && byId(m.parent);
-    const cardEl = h('div', { class: 'card', role: 'button', tabindex: 0, style: sty, onclick: () => { if (cardEl._swallow) return; if (inTrash) cardMenu(m); else openDoc(m.id); } },
+    const cardEl = h('div', { class: 'card', role: 'button', tabindex: 0, style: sty, onclick: () => { if (cardEl._swallow) return; if (inTrash) cardMenu(m); else { if (L.q && L.idxHits && L.idxHits.has(m.id)) S.pendingFind = { id: m.id, q: L.q }; openDoc(m.id); } } },
       h('div', { class: 'thumb' + (m.type === 'whiteboard' ? ' board' : '') },
         m.thumb ? h('img', { src: m.thumb, alt: '', draggable: false }) : icon(m.type === 'whiteboard' ? 'board' : m.type === 'pdf' ? 'pdf' : 'book', 40)),
       h('span', { class: 'badge' }, label), pinB,
       h('button', { class: 'more', 'aria-label': 'Options', onclick: (e) => { e.stopPropagation(); cardMenu(m); } }, icon('more', 20)),
       h('div', { class: 'card-title' }, m.title),
       h('div', { class: 'card-sub' }, (inFolder ? byId(m.parent).title + ' · ' : '') + (inTrash ? `${daysLeft} days left` : `${m.type === 'whiteboard' ? 'Infinite canvas' : m.pages + (m.pages === 1 ? ' page' : ' pages')} · ${fmtDate(L.sort === 'created' ? created(m) : m.updated)}`)),
-      !inTrash && (m.tags || []).length ? h('div', { class: 'card-tags' }, m.tags.slice(0, 3).map((t) => '#' + t).join(' ')) : null);
+      !inTrash && (m.tags || []).length ? h('div', { class: 'card-tags' }, m.tags.slice(0, 3).map((t) => '#' + t).join(' ')) : null,
+      L.q && L.idxHits && L.idxHits.has(m.id) ? (() => { const hs = L.idxHits.get(m.id), x = hs[0]; return h('div', { class: 'card-snip' }, icon(x.kind === 'ink' ? 'edit' : x.kind === 'img' ? 'image' : 'text', 14), h('span', {}, (m.type === 'whiteboard' ? '' : 'p.' + (x.pi + 1) + ' · ') + x.t + (hs.length > 1 ? '  +' + (hs.length - 1) : ''))); })() : null);
     dragToSplit(cardEl, () => ({ id: m.id, title: m.title, type: m.type }), { delay: 480 });
     g.append(cardEl);
   });
@@ -2863,6 +2873,7 @@ async function removeDocFully(id) {
   const assets = [];
   if (d) for (const pg of d.pages) for (const it of pg.items || []) if (it.k === 'img' || it.k === 'audio') assets.push(it.ref);
   await db.removeDoc(id, assets);
+  Indexer.forget(id);
 }
 async function duplicateDoc(m) {
   const d = await db.getDoc(m.id), nid = uid(), pdf = await db.getPdf(m.id);
@@ -3186,7 +3197,7 @@ async function loadTab(T) {
 }
 async function leaveTab() {
   const T = S.tab; if (!T) return;
-  commitEditor(); closeComment(); closePop(); closeMenu(); $("#sheet").hidden = true; clearSel(); exitPresent(); closeZoom(); stopVideo(); stopAudio();
+  commitEditor(); closeFind(); closeComment(); closePop(); closeMenu(); $("#sheet").hidden = true; clearSel(); exitPresent(); closeZoom(); stopVideo(); stopAudio();
   T.view = { ...S.view }; T.vw = vw; T.hist = S.hist; T.curPage = S.curPage;
   S.thumb = (await makeThumb()) || S.thumb; T.thumb = S.thumb;
   await saveNow();
@@ -3211,6 +3222,7 @@ async function showEditor(T) {
   clampView();
   if (!PANE && (!history.state || !history.state.editor)) history.pushState({ editor: T.id }, '');
   requestFrame(true);
+  if (S.pendingFind && S.pendingFind.id === T.id) { const q = S.pendingFind.q; S.pendingFind = null; setTimeout(() => openFind(q), 300); }
 }
 function showHome() {
   $('#editor').hidden = true; $('#library').hidden = false;
@@ -3889,6 +3901,7 @@ function openMenu() {
   item('palm', 'Stylus only', () => { S.stylusOnly = !S.stylusOnly; S.stylusUserSet = true; prefs.set('stylusOnly', S.stylusOnly); prefs.set('stylusUserSet', true); openMenu(); toast(S.stylusOnly ? 'Fingers pan and zoom, stylus draws' : 'Fingers can draw too'); }, { keep: true, val: S.stylusOnly ? 'On' : 'Off' });
   item('settings', 'Gestures and pen', settingsDialog);
   item('edit', 'Rename', renameDoc);
+  item('search', 'Find in note', () => openFind(''));
   item('tag', 'Tags and links', linksDialog);
   if (d.type !== 'pdf') item('paper', d.type === 'whiteboard' ? 'Background' : 'Paper style', paperDialog);
   if (paged) item('plus', 'Add page after this', () => { const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); });
@@ -4066,6 +4079,39 @@ function toolbarRows(repaint) {
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Tools on the toolbar', h('small', {}, 'Hide what you never use and put your favourites first.')), list),
   ].filter(Boolean);
 }
+function searchPane(repaint) {
+  const seg = (label, hint, opts, get, set) => h('div', { class: 'srow' }, h('div', { class: 'slabel' }, label, hint ? h('small', {}, hint) : null),
+    h('div', { class: 'segs mini' }, opts.map(([v, l]) => h('button', { class: 'seg' + (get() === v ? ' on' : ''), onclick: () => { set(v); repaint(); } }, l))));
+  const st = h('div', { class: 'srow' }), upd = () => {
+    const sx = Indexer.status, notes = L.metas.filter((m) => !m.trashed && m.type !== 'folder').length;
+    st.replaceChildren(h('div', { class: 'slabel' }, 'Index status', h('small', {}, Indexer.running || Indexer.queue.length ? `Working: ${sx.docs} note${sx.docs === 1 ? '' : 's'} left${sx.page ? ' · ' + sx.page : ''}. It pauses while you write.` : `${Indexer.mem.size} of ${notes} notes searchable. Up to date.`)),
+      h('div', { class: 'segs mini' }, h('button', { class: 'seg', onclick: async () => { await db.clearIdx(); Indexer.mem.clear(); Indexer.queue.length = 0; Indexer.scanAll(L.metas); toast('Re-reading all notes in the background'); upd(); } }, 'Re-read everything')));
+  };
+  upd();
+  const fn = () => { if (st.isConnected) upd(); else Indexer.listeners.delete(fn); }; Indexer.listeners.add(fn);
+  return [
+    seg('Read handwriting and pictures', ocr.ocrSupported() ? 'Makes ink and text inside photos searchable. Runs in the background only while you are not writing. Typed text and PDF text are always searchable.' : 'This browser cannot run the text reader. Typed text and PDF text are still searchable.',
+      [['auto', 'Automatic'], ['off', 'Off']], () => prefs.get('ocr', 'auto'), (v) => { prefs.set('ocr', v); if (v !== 'off') Indexer.scanAll(L.metas); }),
+    seg('Languages', 'Reading both takes a little longer per page', [['eng+vie', 'English + Vietnamese'], ['eng', 'English'], ['vie', 'Vietnamese']], ocrLangs, (v) => { prefs.set('ocrLangs', v); ocr.setLangs(v); Indexer.scanAll(L.metas); }),
+    st,
+    h('p', { class: 'note' }, 'Handwriting is read by an on-device engine made for print. Neat, separated letters work best; joined-up cursive and very small writing are often missed, so a search may not find every word. Nothing leaves this device. The reader files (about 9 MB) download the first time you use it, then work offline.'),
+  ];
+}
+function backupPane(repaint) {
+  const last = prefs.get('lastBackup', 0), box = h('small', {}, 'Checking storage…');
+  try { navigator.storage && navigator.storage.estimate && navigator.storage.estimate().then(async (e) => { const p = navigator.storage.persisted ? await navigator.storage.persisted() : false; box.textContent = `Using ${fmtBytes(e.usage || 0)} of about ${fmtBytes(e.quota || 0)}. ${p ? 'Protected from automatic clean-up.' : 'The browser may clear it if the device runs very low on space.'}`; }); } catch {}
+  const pick = h('input', { type: 'file', style: 'display:none', accept: '.anota,application/octet-stream,*/*', onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { $('#dlg').close(); setTimeout(() => restoreFlow(f), 80); } } });
+  const act = (label, ic, fn, primary) => h('button', { class: 'btn' + (primary ? ' primary' : ''), onclick: fn }, icon(ic, 18), label);
+  return [
+    h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Last backup', h('small', {}, last ? new Date(last).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Never. Your notes live only on this device.')), h('div', {})),
+    h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Storage', box), h('div', {})),
+    h('div', { class: 'bkbtns' },
+      act('Back up everything', 'down', () => { $('#dlg').close(); setTimeout(() => backupNow('save'), 80); }, true),
+      navigator.canShare ? act('Share or send to Drive', 'upload', () => { $('#dlg').close(); setTimeout(() => backupNow('share'), 80); }) : null,
+      act('Restore from a file', 'upload', () => pick.click()), pick),
+    h('p', { class: 'note' }, 'One file holds every note, folder, PDF, picture, recording, the Trash and your settings. Picture and PDF bytes are copied exactly, so nothing loses quality. Keep a copy off this device (Drive, email, a computer).'),
+  ];
+}
 let setTab = 'look';
 function settingsDialog() {
   const body = h('div', { class: 'settings' });
@@ -4073,7 +4119,7 @@ function settingsDialog() {
   const row = (label, hint, opts, get, set) => h('div', { class: 'srow' },
     h('div', { class: 'slabel' }, label, hint ? h('small', {}, hint) : null),
     h('div', { class: 'segs mini' }, opts.map(([v, l]) => h('button', { class: 'seg' + (get() === v ? ' on' : ''), onclick: () => { set(v); save(); paint(); } }, l))));
-  const TABS = [['look', 'Look', 'paper'], ['toolbar', 'Toolbar', 'grip'], ['pen', 'S Pen', 'ball'], ['draw', 'Drawing', 'shape'], ['touch', 'Touch', 'hand'], ['about', 'About', 'book']];
+  const TABS = [['look', 'Look', 'paper'], ['toolbar', 'Toolbar', 'grip'], ['pen', 'S Pen', 'ball'], ['draw', 'Drawing', 'shape'], ['touch', 'Touch', 'hand'], ['search', 'Search', 'search'], ['backup', 'Backup', 'shield'], ['about', 'About', 'book']];
   const curStyle = () => document.documentElement.dataset.style;
   const panes = {
     look: () => [
@@ -4107,6 +4153,8 @@ function settingsDialog() {
       row('Hold still to smooth a curve', 'Draw a wobbly line and pause: it becomes a smooth curve', [[true, 'On'], [false, 'Off']], () => S.holdSmooth, (v) => { S.holdSmooth = v; prefs.set('holdSmooth', v); }),
       row('Scribble to erase', 'Scratch back and forth over ink to rub it out', [[true, 'On'], [false, 'Off']], () => S.scribble, (v) => { S.scribble = v; prefs.set('scribble', v); }),
       row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); })],
+    search: () => searchPane(paint),
+    backup: () => backupPane(paint),
     about: () => [h('p', { class: 'note' }, 'Anota ' + APP_VERSION), h('p', { class: 'note' }, 'Everything is stored on this device. Notes work offline.')],
   };
   const paint = () => {
@@ -4273,12 +4321,13 @@ function wire() {
   $('#sheet').onclick = (e) => { if (e.target.id === 'sheet') $('#sheet').hidden = true; };
   $('#sheetAdd').onclick = () => { const i = S.doc.pages.length - 1; addPageAt(i + 1, blankPageLike(i)); openSheet(); };
   $('#fab').onclick = () => toggleFab();
-  $('#search').oninput = (e) => { L.q = e.target.value.trim().toLowerCase(); renderLibrary(); };
+  $('#search').oninput = (e) => { L.q = e.target.value.trim().toLowerCase(); renderLibrary(); librarySearchChanged(); };
   $('#file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importDocument(f); };
   for (const id of ['#imgfile', '#camfile']) $(id).onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) insertImage(f); };
   document.addEventListener('click', (e) => { if (!e.target.closest('.fab-wrap')) toggleFab(false); });
 
   window.addEventListener('keydown', (e) => {
+    if (S.doc && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !e.shiftKey) { e.preventDefault(); const inp = $('#findbar input'); if (S.find && inp) { inp.focus(); inp.select(); } else openFind(''); return; }
     if (!S.doc || e.target.closest('input,textarea')) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
@@ -4332,9 +4381,153 @@ function wire() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => requestFrame(true));
 }
 
+/* =====================================================================
+   Search (typed text, PDF text, handwriting, pictures) and backup
+   ===================================================================== */
+let lastInput = Date.now();
+for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart']) window.addEventListener(ev, () => { lastInput = Date.now(); }, { capture: true, passive: true });
+/** background work waits until the app is visible, you have stopped writing, and the battery is not low */
+async function pace() {
+  for (;;) {
+    let low = false; try { const b = navigator.getBattery && await navigator.getBattery(); low = !!b && !b.charging && b.level < 0.2; } catch {}
+    if (!document.hidden && !S.act && Date.now() - lastInput > 3000 && !low) return;
+    await new Promise((r) => setTimeout(r, document.hidden ? 4000 : low ? 30000 : 700));
+  }
+}
+async function openPdfFor(id) {
+  const buf = await db.getPdf(id); if (!buf) return null;
+  const pdfjs = await loadPdfjs();
+  return pdfjs.getDocument({ data: new Uint8Array(buf.slice ? buf.slice(0) : buf), isEvalSupported: false }).promise;
+}
+const ocrOn = () => prefs.get('ocr', 'auto') !== 'off' && ocr.ocrSupported();
+const ocrLangs = () => prefs.get('ocrLangs', 'eng+vie');
+const rowsOf = (it) => textLayout(it).rows.map((r) => [r.parts.map((p) => p.t).join(''), TP + r.y, r.lh]);
+function startIndexer() {
+  if (PANE) return;
+  ocr.setLangs(ocrLangs());
+  Indexer.opts = { rectOf: (it) => itemRect(it), rowsOf, pace, openPdf: openPdfFor, renderPdf: renderPdfBitmap, ocrOn, langs: ocrLangs };
+  Indexer.listeners.add(() => { if (S.find) { clearTimeout(startIndexer.t); startIndexer.t = setTimeout(() => doFind(false), 600); } });
+  Indexer.load().then(() => setTimeout(() => Indexer.scanAll(L.metas), 3500));
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}      // ask the browser not to evict our data
+}
+
+/* ---- find in this note ---- */
+function findHits(q) {
+  const d = S.doc; if (!d || !tokens(q).length) return [];
+  const idx = Indexer.mem.get(d.id);
+  const pages = d.pages.map((pg, pi) => { const ip = (idx && (idx.pages.find((p) => p.id === pg.id) || idx.pages[pi])) || {}; return { e: typedOf(pg, itemRect, rowsOf), f: ip.f || [], i: ip.i || [], m: ip.m || [] }; });
+  const ys = S.layout.ys;
+  return searchEntry({ pages }, q).map((x) => ({ ...x, wy: (ys[x.pi] || 0) + x.y, wx: x.x })).sort((a, b) => a.pi - b.pi || a.wy - b.wy || a.wx - b.wx);
+}
+function ensureFindBar() {
+  let b = $('#findbar'); if (b) return b;
+  const inp = h('input', { class: 'field', type: 'search', placeholder: 'Find in this note', enterkeyhint: 'search', 'aria-label': 'Find in this note' });
+  inp.addEventListener('input', () => { if (S.find) { S.find.q = inp.value; doFind(true); } });
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); } else if (e.key === 'Escape') closeFind(); });
+  b = h('div', { id: 'findbar', class: 'findbar', hidden: true },
+    icon('search', 18), inp, h('span', { class: 'fcount' }),
+    h('button', { class: 'fbtn', 'aria-label': 'Previous match', onclick: () => stepFind(-1) }, icon('chevUp', 18)),
+    h('button', { class: 'fbtn', 'aria-label': 'Next match', onclick: () => stepFind(1) }, icon('chevDown', 18)),
+    h('button', { class: 'fbtn', 'aria-label': 'Close search', onclick: closeFind }, icon('x', 18)));
+  ($('#main') || document.body).append(b); return b;
+}
+function openFind(q = '') {
+  if (!S.doc) return;
+  closePop(); closeMenu(); clearSel();
+  const b = ensureFindBar(); b.hidden = false;
+  S.find = { q, hits: [], i: -1 };
+  const inp = b.querySelector('input'); inp.value = q; setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  doFind(!!q);
+}
+function doFind(jump) {
+  const f = S.find; if (!f) return;
+  const b = $('#findbar'), cnt = b.querySelector('.fcount');
+  const keep = f.hits[f.i];
+  f.hits = findHits(f.q);
+  f.i = f.hits.length ? (keep ? Math.max(0, f.hits.findIndex((x) => x.pi === keep.pi && x.x === keep.x && x.y === keep.y)) : (jump ? 0 : -1)) : -1;
+  const busy = S.doc && (Indexer.queue.includes(S.doc.id) || Indexer.running);
+  cnt.textContent = !tokens(f.q).length ? '' : f.hits.length ? (f.i >= 0 ? f.i + 1 : '–') + ' / ' + f.hits.length : busy ? 'Reading handwriting…' : 'No matches';
+  if (jump && f.hits.length) { if (f.i < 0) f.i = 0; gotoHit(f.i, true); }
+  requestFrame();
+}
+function gotoHit(i, quiet) {
+  const f = S.find; if (!f || !f.hits.length) return;
+  f.i = (i + f.hits.length) % f.hits.length;
+  const x = f.hits[f.i], b = $('#findbar'); b.querySelector('.fcount').textContent = (f.i + 1) + ' / ' + f.hits.length;
+  focusPoint({ pg: x.pi, x: x.x + x.w / 2, y: x.y + x.h / 2, s: Math.max(S.view.s, 0.9) });
+  requestFrame();
+}
+const stepFind = (d) => { const f = S.find; if (f && f.hits.length) gotoHit((f.i < 0 ? (d > 0 ? 0 : -1) : f.i + d)); };
+function closeFind() { S.find = null; const b = $('#findbar'); if (b) b.hidden = true; requestFrame(); }
+function drawFindHits(ctx, s) {
+  const f = S.find; if (!f || !f.hits.length) return;
+  const vis = [-S.view.x / s, -S.view.y / s, (vw - S.view.x) / s, (vh - S.view.y) / s];
+  ctx.save();
+  f.hits.forEach((x, k) => {
+    const y = x.wy; if (x.wx > vis[2] || x.wx + x.w < vis[0] || y > vis[3] || y + x.h < vis[1]) return;
+    const cur = k === f.i, pad = 3 / s;
+    ctx.fillStyle = cur ? 'rgba(255,170,0,.42)' : 'rgba(255,214,10,.34)'; ctx.strokeStyle = cur ? 'rgba(230,119,0,.95)' : 'rgba(240,160,0,.6)'; ctx.lineWidth = (cur ? 2.4 : 1.2) / s;
+    ctx.beginPath(); ctx.roundRect(x.wx - pad, y - pad, x.w + pad * 2, x.h + pad * 2, 5 / s); ctx.fill(); ctx.stroke();
+  });
+  ctx.restore();
+}
+
+/* ---- library search: also looks inside notes ---- */
+function computeIdxHits() {
+  L.idxHits = new Map();
+  const q = L.q.replace(/^#/, '');
+  if (L.q.startsWith('#') || q.length < 2) return;
+  for (const r of Indexer.search(q)) L.idxHits.set(r.id, r.hits);
+}
+let idxSearchT = 0;
+function librarySearchChanged() { clearTimeout(idxSearchT); idxSearchT = setTimeout(() => { computeIdxHits(); renderLibrary(); }, 140); }
+
+/* ---- backup and restore ---- */
+const fmtBytes = (n) => (n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : n > 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1e3)) + ' KB');
+function saveBlob(blob, name) {
+  const a = h('a', { href: URL.createObjectURL(blob), download: name, style: 'display:none' });
+  document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 90000);
+}
+async function backupNow(how) {
+  const stamp = new Date().toISOString().slice(0, 10), name = 'Anota-backup-' + stamp + '.anota';
+  const msg = h('p', {}, 'Packing your notes…'), bar = h('div', { class: 'pbar' }, h('i'));
+  const close = modal({ title: 'Backing up', body: [msg, bar], actions: [] });
+  try {
+    const { blob, notes, files } = await exportAll({ prefsText: localStorage.getItem('inknote.prefs') || '', onProgress: (i, t, title) => { msg.textContent = `Packing “${title}” (${i + 1} of ${t})`; bar.firstChild.style.width = Math.round(i / Math.max(1, t) * 100) + '%'; } });
+    close();
+    prefs.set('lastBackup', Date.now());
+    const file = new File([blob], name, { type: 'application/octet-stream' });
+    if (how === 'share' && navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); } catch (e) { if (e && e.name !== 'AbortError') saveBlob(blob, name); } }
+    else saveBlob(blob, name);
+    modal({ title: 'Backup ready', body: [h('p', {}, `${notes} note${notes === 1 ? '' : 's'} and ${files} attached file${files === 1 ? '' : 's'}, ${fmtBytes(blob.size)}.`), h('p', { class: 'note' }, how === 'share' ? 'Pick Drive, email or another app to keep it somewhere safe.' : 'Saved to your Downloads folder as ' + name + '. Copy it to cloud storage or another device to be safe.')], actions: [{ label: 'Done', kind: 'primary' }] });
+  } catch (e) { close(); console.error(e); modal({ title: 'Backup failed', body: h('p', {}, String(e.message || e)), actions: [{ label: 'Close' }] }); }
+}
+async function restoreFlow(file) {
+  let sum; try { sum = await inspect(file); } catch (e) { return modal({ title: 'Can’t restore', body: h('p', {}, String(e.message || e)), actions: [{ label: 'Close' }] }); }
+  const when = sum.made ? new Date(sum.made).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'unknown date';
+  let withPrefs = true;
+  const chk = h('input', { type: 'checkbox', checked: true, onchange: (e) => { withPrefs = e.target.checked; } });
+  modal({ title: 'Restore this backup?', body: [
+    h('p', {}, `Made ${when}: ${sum.notes} note${sum.notes === 1 ? '' : 's'}, ${sum.folders} folder${sum.folders === 1 ? '' : 's'}, ${sum.files} attached file${sum.files === 1 ? '' : 's'}.`),
+    h('p', { class: 'note' }, 'Add keeps everything you have now. If the same note is in both, the one edited last wins. Replace erases this device first.'),
+    h('label', { class: 'chk' }, chk, ' Also restore settings')],
+  actions: [{ label: 'Cancel' }, { label: 'Replace all', fn: () => { setTimeout(async () => { if (await confirmDlg('Erase everything here first?', 'All notes on this device are removed, then the backup is loaded. This cannot be undone.', 'Replace')) runRestore(file, 'replace', withPrefs); }, 40); } },
+    { label: 'Add to my notes', kind: 'primary', fn: () => { setTimeout(() => runRestore(file, 'merge', withPrefs), 40); } }] });
+}
+async function runRestore(file, mode, withPrefs) {
+  const msg = h('p', {}, 'Restoring…');
+  const close = modal({ title: 'Restoring', body: [msg, h('p', { class: 'note' }, 'Keep this screen open until it finishes.')], actions: [] });
+  try {
+    const r = await restore(file, { mode, prefs: withPrefs, onProgress: (n, t) => { msg.textContent = `Restoring ${n}: ${t}`; } });
+    close();
+    modal({ title: 'Restored', body: h('p', {}, `${r.added} added, ${r.updated} updated, ${r.skipped} already up to date, ${r.files} files.`), actions: [{ label: 'Done', kind: 'primary', fn: () => { setTimeout(() => location.reload(), 60); } }] });
+  } catch (e) { close(); console.error(e); modal({ title: 'Restore failed', body: [h('p', {}, String(e.message || e)), h('p', { class: 'note' }, 'Some notes may already have been restored.')], actions: [{ label: 'Reload', kind: 'primary', fn: () => setTimeout(() => location.reload(), 60) }] }); }
+}
+
 async function boot() {
   wire();
   await refreshLibrary();
+  startIndexer();
   renderTabs();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     try { await navigator.serviceWorker.register('sw.js'); } catch (e) { console.warn('SW', e); }
@@ -4369,4 +4562,4 @@ async function boot() {
 boot();
 
 // test hook
-window.__ink = { S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote, graphDialog };
+window.__ink = { S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote, graphDialog, Indexer, ocr, openFind, findHits, exportAll, restore, inspect };
