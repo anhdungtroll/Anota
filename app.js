@@ -2,7 +2,7 @@ import './polyfills.js';
 import { db } from './db.js';
 import { buildPdf } from './pdfout.js';
 import * as ocr from './ocr.js';
-import { drawTpl, TEMPLATES, tableTemplate, previewTpl } from './templates.js';
+import { drawTpl, TPL_W, TPL_H, TEMPLATES, tableTemplate, previewTpl } from './templates.js';
 import { Indexer, searchEntry, typedOf, tokens, norm } from './search.js';
 import { exportAll, inspect, restore } from './backup.js';
 
@@ -87,6 +87,8 @@ const IC = {
   star: 'M12 3l2.7 5.8 6.3.8-4.6 4.4 1.2 6.3L12 17.3 6.4 20.3l1.2-6.3L3 9.6l6.3-.8z',
   ruler: 'M3 17 17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2',
   fill: 'M19 11 11 3 3 11l8 8zM21 15s2 2.2 2 3.5a2 2 0 0 1-4 0c0-1.3 2-3.5 2-3.5z',
+  share: 'M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v14',
+  sidebar: 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 3v18M5.5 8h1M5.5 12h1M5.5 16h1',
   home: 'M3 11l9-8 9 8M5 10v10h14V10M10 20v-6h4v6',
   folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
   folderPlus: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 11v6M9 14h6',
@@ -186,7 +188,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.14 (build 1)';
+const APP_VERSION = '3.16 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -429,6 +431,7 @@ function drawItem(c, it, o) {
 function drawItem0(c, it, o) {
   const dark = S.doc.paper.color === 'dark';
   const r = itemRect(it);
+  if (it.k === 'tpl') { c.save(); c.translate(it.x, it.y); c.scale(it.w / TPL_W, it.w / TPL_W); drawTpl(c, it, dark); c.restore(); return; }
   if (it.k === 'text') {
     if (S.editing === it) return;
     const l = textLayout(it);
@@ -2573,7 +2576,7 @@ function finishAct() {
 let saveTimer = null;
 function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 900); }
 async function saveNow() {
-  clearTimeout(saveTimer);
+  clearTimeout(saveTimer); saveTimer = null;
   const d = S.doc; if (!d) return;
   d.updated = Date.now();
   d.view = { ...S.view, w: vw };
@@ -2647,26 +2650,82 @@ async function renderPageCanvas(i, pxW, opt = {}) {
   drawPage(g, pg, { pdfBitmap: bmp, scale: k, flat: true, bgOnly: !!opt.bgOnly });
   return c;
 }
-async function exportPdf() {
-  const doc = S.doc;
-  toast('Building PDF…', 8000);
+async function exportDoc({ pages, fmt = 'pdf' } = {}) {
+  const doc = S.doc, idxs = pages || doc.pages.map((_, i) => i);
+  toast(fmt === 'pdf' ? 'Building PDF…' : 'Building images…', 8000);
   try {
-    const out = [];
-    for (let i = 0; i < doc.pages.length; i++) {
-      const c = await renderPageCanvas(i, isInf(doc) ? 1800 : 1240);
-      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
-      out.push({ jpeg: new Uint8Array(await blob.arrayBuffer()), wpx: c.width, hpx: c.height });
+    const name = (doc.title || 'note').replace(/[^\w\- ]+/g, '').trim() || 'note', files = [];
+    if (fmt === 'pdf') {
+      const out = [];
+      for (const i of idxs) {
+        const c = await renderPageCanvas(i, isInf(doc) ? 1800 : 1240);
+        const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
+        out.push({ jpeg: new Uint8Array(await blob.arrayBuffer()), wpx: c.width, hpx: c.height });
+      }
+      files.push(new File([buildPdf(out)], name + (idxs.length === 1 && doc.pages.length > 1 ? ' p' + (idxs[0] + 1) : '') + '.pdf', { type: 'application/pdf' }));
+    } else {
+      for (const i of idxs) {
+        const c = await renderPageCanvas(i, isInf(doc) ? 1800 : 1500), blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+        files.push(new File([blob], name + (doc.pages.length > 1 ? ' p' + (i + 1) : '') + '.png', { type: 'image/png' }));
+      }
     }
-    const pdf = buildPdf(out);
-    const name = (doc.title || 'note').replace(/[^\w\- ]+/g, '').trim() || 'note';
-    const file = new File([pdf], name + '.pdf', { type: 'application/pdf' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: doc.title }); $('#toast').hidden = true; return; } catch (e) { if (e && e.name === 'AbortError') { $('#toast').hidden = true; return; } }
+    $('#toast').hidden = true;
+    if (navigator.canShare && navigator.canShare({ files })) {
+      try { await navigator.share({ files, title: doc.title }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
     }
-    const a = h('a', { href: URL.createObjectURL(pdf), download: name + '.pdf' });
-    document.body.append(a); a.click(); a.remove();
-    toast('PDF saved to your downloads');
+    for (const f of files) { const a = h('a', { href: URL.createObjectURL(f), download: f.name }); document.body.append(a); a.click(); a.remove(); await new Promise((r) => setTimeout(r, 250)); }
+    toast(files.length > 1 ? files.length + ' images saved to your downloads' : 'Saved to your downloads');
   } catch (e) { console.error(e); toast('Export failed'); }
+}
+const exportPdf = () => exportDoc({ fmt: 'pdf' });
+function shareDialog() {
+  const d = S.doc, cur = S.curPage || 0, multi = d.pages.length > 1;
+  const st = { scope: multi ? 'page' : 'all', fmt: 'pdf' }, scopeRow = h('div', { class: 'segs' }), fmtRow = h('div', { class: 'segs' }), note = h('p', { class: 'note' });
+  const paint = () => {
+    scopeRow.replaceChildren(...[...(multi ? [['page', 'This page (' + (cur + 1) + ')']] : []), ['all', multi ? 'Whole note (' + d.pages.length + ' pages)' : 'This note']].map(([v, l]) => h('button', { class: 'seg' + (st.scope === v ? ' on' : ''), type: 'button', onclick: () => { st.scope = v; paint(); } }, l)));
+    fmtRow.replaceChildren(...[['pdf', 'PDF'], ['png', 'Picture (PNG)']].map(([v, l]) => h('button', { class: 'seg' + (st.fmt === v ? ' on' : ''), type: 'button', onclick: () => { st.fmt = v; paint(); } }, l)));
+    note.textContent = st.fmt === 'png' && st.scope === 'all' && multi ? 'One picture per page.' : st.fmt === 'pdf' ? 'Opens your share sheet, or downloads on a computer.' : '';
+  };
+  paint();
+  modal({ title: 'Share', body: [h('div', { class: 'lbl' }, 'What to share'), scopeRow, h('div', { class: 'lbl' }, 'As'), fmtRow, note], actions: [{ label: 'Cancel' }, { label: 'Share', kind: 'primary', fn: () => { exportDoc({ pages: st.scope === 'page' ? [cur] : null, fmt: st.fmt }); } }] });
+}
+
+/* ---- side directory: browse all notes and folders without leaving the note ---- */
+const dirOpen = new Set(prefs.get('dirOpen', []));
+function dirPanel() {
+  let p = $('#dirpanel');
+  if (!p) {
+    p = h('aside', { id: 'dirpanel', class: 'dirpanel', hidden: true, 'aria-label': 'All notes' });
+    document.body.append(p);
+    const sc = h('div', { id: 'dirscrim', class: 'dirscrim', hidden: true, onclick: closeDir }); document.body.append(sc);
+  }
+  return p;
+}
+function closeDir() { const p = $('#dirpanel'); if (p) p.hidden = true; const sc = $('#dirscrim'); if (sc) sc.hidden = true; }
+function toggleDir() { const p = dirPanel(); if (!p.hidden) return closeDir(); p.hidden = false; $('#dirscrim').hidden = false; paintDir(); db.listMeta().then((m) => { L.metas = m; paintDir(); }).catch(() => {}); setTimeout(() => p.querySelector('input')?.focus({ preventScroll: true }), 60); }
+function paintDir() {
+  const p = $('#dirpanel'); if (!p || p.hidden) return;
+  const q = (p._q || '').trim(), nq = norm(q), list = h('div', { class: 'dirlist' });
+  const sorter = (a, b) => (isFolder(b) - isFolder(a)) || (L.sort === 'name' ? a.title.localeCompare(b.title) : (b[L.sort === 'created' ? 'created' : 'updated'] || 0) - (a[L.sort === 'created' ? 'created' : 'updated'] || 0));
+  const noteIcon = (m) => icon(m.type === 'folder' ? 'folder' : m.type === 'whiteboard' ? 'board' : m.type === 'pdf' ? 'pdf' : 'book', 18);
+  const open = (m) => { closeDir(); openDoc(m.id); };
+  const row = (m, depth) => {
+    const f = isFolder(m), isOpen = dirOpen.has(m.id), cur = S.doc && m.id === S.doc.id;
+    const r = h('button', { class: 'dirrow' + (cur ? ' cur' : '') + (S.tabs.some((t) => t.id === m.id) ? ' tabbed' : ''), style: `padding-left:${10 + depth * 18}px`, onclick: () => {
+      if (f) { isOpen ? dirOpen.delete(m.id) : dirOpen.add(m.id); prefs.set('dirOpen', [...dirOpen]); paintDir(); } else open(m); } },
+      f ? h('span', { class: 'dirchev' + (isOpen ? ' on' : '') }, icon('chevDown', 14, 2.4)) : h('span', { class: 'dirchev none' }), noteIcon(m), h('span', { class: 'dirname' }, m.title || 'Untitled'),
+      f ? h('small', {}, String(childrenOf(m.id).length)) : null);
+    return r;
+  };
+  const walk = (parent, depth) => { for (const m of childrenOf(parent).sort(sorter)) { list.append(row(m, depth)); if (isFolder(m) && dirOpen.has(m.id)) walk(m.id, depth + 1); } };
+  if (nq) { const hits = L.metas.filter((m) => !m.trashed && !isFolder(m) && norm(m.title).includes(nq)).sort(sorter); hits.forEach((m) => list.append(row(m, 0))); if (!hits.length) list.append(h('p', { class: 'note' }, 'No note with that name.')); }
+  else { walk(null, 0); if (!list.children.length) list.append(h('p', { class: 'note' }, 'No notes yet.')); }
+  const inp = p.querySelector('input') || h('input', { class: 'field', type: 'search', placeholder: 'Search notes', 'aria-label': 'Search notes', oninput: (e) => { p._q = e.target.value; paintDir(); } });
+  const keepFocus = document.activeElement === inp, selS = inp.selectionStart;
+  p.replaceChildren(h('div', { class: 'dirhead' }, h('b', {}, 'Notes'), h('button', { class: 'ib', 'aria-label': 'Close', onclick: closeDir }, icon('x', 18))), inp, list,
+    h('div', { class: 'dirfoot' }, h('button', { class: 'btn', onclick: () => { closeDir(); switchTo(null); } }, icon('home', 17), 'Home screen'),
+      h('button', { class: 'btn', onclick: () => { closeDir(); newDialog('notebook'); } }, icon('plus', 17), 'New')));
+  if (keepFocus) { inp.focus({ preventScroll: true }); try { inp.setSelectionRange(selS, selS); } catch {} }
 }
 
 /* =====================================================================
@@ -2984,16 +3043,21 @@ async function materializeTpl(rec) {
   return { tpl, strokes, items, h: rec.h || PH };
 }
 const builtRec = (t) => ({ id: t.id, name: t.name, h: PH, tpl: { ops: t.build() }, strokes: [], items: [] });
+/** a whiteboard template is a movable, resizable object (plus any ink / pictures saved with it) */
+function tplItem(m, ox, oy, w) {
+  const k = w / TPL_W, it = { id: uid(), k: 'tpl', ops: m.tpl ? m.tpl.ops : [], x: ox, y: oy, w, ar: TPL_W / TPL_H };
+  const strokes = m.strokes.map((st) => { const q = st; for (let i = 0; i < q.p.length; i += 3) { q.p[i] = ox + q.p[i] * k; q.p[i + 1] = oy + q.p[i + 1] * k; } q.s = (q.s || 3) * k; return q; });
+  const items = m.items.map((x) => { x.x = ox + x.x * k; x.y = oy + x.y * k; if (x.w) x.w *= k; if (x.s) x.s *= k; return x; });
+  return { it, all: [it, ...strokes, ...items] };
+}
 async function applyTemplateHere(rec) {
   const d = S.doc, m = await materializeTpl(rec);
   if (isInf(d)) {
-    const p0 = d.pages[0], old = p0.tpl, ns = m.strokes.length, ni = m.items.length;
-    p0.tpl = m.tpl; p0.strokes.push(...m.strokes); p0.items.push(...m.items); baseDirty = true; requestFrame(true);
-    commit({
-      undo() { p0.tpl = old; m.strokes.forEach((s) => { const i = p0.strokes.indexOf(s); if (i >= 0) p0.strokes.splice(i, 1); }); m.items.forEach((s) => { const i = p0.items.indexOf(s); if (i >= 0) p0.items.splice(i, 1); }); baseDirty = true; },
-      redo() { p0.tpl = m.tpl; p0.strokes.push(...m.strokes); p0.items.push(...m.items); baseDirty = true; },
-    });
-    toast(rec.name + ' added to the board');
+    const cc = viewCentre(), p0 = d.pages[0], w = Math.max(200, Math.min(TPL_W, (vw / S.view.s) * 0.7, (vh / S.view.s) * 0.7 * TPL_W / TPL_H));
+    const k = w / TPL_W, ox = cc.x - w / 2, oy = cc.y - (w * TPL_H / TPL_W) / 2;
+    const box = tplItem(m, ox, oy, w);
+    actAddObjs(p0, box.all); setTool('lasso'); makeSel([{ o: box.it, pg: p0, pi: 0 }]);
+    toast(rec.name + ' added. Drag to move, pull a corner to resize.', 2800);
   } else {
     const pg = newPage(m.h, { tpl: m.tpl }); pg.strokes = m.strokes; pg.items = m.items;
     const i = (S.curPage || 0) + 1; addPageAt(i, pg); scrollToPage(i);
@@ -3087,7 +3151,13 @@ function newDialog(type, keep) {
     { label: 'Create', kind: 'primary', fn: async () => {
       const blank = chosen && type === 'notebook';           // a template brings its own lines
       const doc = makeDoc({ type, title: title.value.trim() || 'Untitled', paper: { style: blank ? 'blank' : pk.st.style, color: pk.st.color, sp: pk.st.sp, lc: pk.st.lc } });
-      if (chosen) { const m = await materializeTpl(chosen), p0 = doc.pages[0]; p0.tpl = m.tpl; p0.strokes = m.strokes; p0.items = m.items; if (type === 'notebook') p0.h = m.h; }
+      if (chosen) { const m = await materializeTpl(chosen), p0 = doc.pages[0];
+        if (type === 'notebook') { p0.tpl = m.tpl; p0.strokes = m.strokes; p0.items = m.items; p0.h = m.h; }
+        else {                                   // whiteboard: a movable object in the middle of the first view
+          const sc = Math.min(1, (vh - 150) / TPL_H, (vw - 40) / TPL_W), w = TPL_W;
+          const box = tplItem(m, 0, 0, w); p0.items = box.all.filter((x) => !x.p); p0.strokes = box.all.filter((x) => x.p);
+          doc.view = { s: sc, x: (vw - TPL_W * sc) / 2, y: 80, w: vw };
+        } }
       await db.saveDoc(doc, { id: doc.id, title: doc.title, type, updated: doc.updated, pages: 1, thumb: null, parent: L.folder });
       await refreshLibrary(); openDoc(doc.id);
     } }] });
@@ -4036,24 +4106,27 @@ function startPresent() {
 }
 function openMenu() {
   const m = $('#menu'); m.innerHTML = ''; m.hidden = false; menuOpen = true;
-  const d = S.doc, paged = !isInf(d);
+  const d = S.doc, paged = !isInf(d), pdfDoc = d.type === 'pdf';
   const item = (ic, label, fn, opts = {}) => m.append(h('button', { class: 'mi' + (opts.danger ? ' danger' : ''), onclick: () => { if (!opts.keep) closeMenu(); fn(); } },
     h('span', { class: 'ico' }, icon(ic, 22)), label, opts.val ? h('span', { class: 'val' }, opts.val) : null));
-  item('palm', 'Stylus only', () => { S.stylusOnly = !S.stylusOnly; S.stylusUserSet = true; prefs.set('stylusOnly', S.stylusOnly); prefs.set('stylusUserSet', true); openMenu(); toast(S.stylusOnly ? 'Fingers pan and zoom, stylus draws' : 'Fingers can draw too'); }, { keep: true, val: S.stylusOnly ? 'On' : 'Off' });
-  item('settings', 'Gestures and pen', settingsDialog);
-  item('edit', 'Rename', renameDoc);
+  const head = (t) => m.append(h('div', { class: 'mhead' }, t));
+  head('Note');
   item('search', 'Find in note', () => openFind(''));
   item('tag', 'Tags and links', linksDialog);
-  if (d.type !== 'pdf') item('paper', d.type === 'whiteboard' ? 'Background' : 'Paper style', paperDialog);
-  if (d.type !== 'pdf') item('pages', paged ? 'Add template page…' : 'Board template…', templatesDialog);
-  if (paged) item('plus', 'Add page after this', () => { const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); });
-  if (d.type !== 'pdf') item('bookmark', 'Save this page as a template', saveTemplateFromPage);
+  item('share', 'Share…', shareDialog);
+  head('Page');
+  if (paged) item('plus', 'Add blank page', () => { const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); });
+  if (!pdfDoc) item('pages', paged ? 'Add template page…' : 'Board template…', templatesDialog);
+  if (!pdfDoc) item('paper', d.type === 'whiteboard' ? 'Background' : 'Paper style', paperDialog);
+  if (!pdfDoc) item('bookmark', 'Save page as template', saveTemplateFromPage);
+  if (paged && d.pages.length > 1) item('trash', 'Delete this page', async () => { const i = S.curPage || 0; if (await confirmDlg('Delete page ' + (i + 1) + '?', 'You can undo this right after.')) removePageAt(i); }, { danger: true });
+  head('View');
   item('fit', 'Fit to screen', () => { const t = {}; const keep = { ...S.view }; fitView(); Object.assign(t, S.view); S.view = keep; animateView(t, 280); });
   item('present', 'Present', startPresent);
   item('focus', 'Focus mode', () => { document.body.classList.add('focus'); setTimeout(resize, 30); toast('Tap the corner button to leave focus mode', 2200); });
-  m.append(h('div', { class: 'mdiv' }));
-  item('down', 'Export as PDF', exportPdf);
-  if (paged && d.pages.length > 1) { m.append(h('div', { class: 'mdiv' })); item('trash', 'Delete this page', async () => { const i = S.curPage || 0; if (await confirmDlg('Delete page ' + (i + 1) + '?', 'You can undo this right after.')) removePageAt(i); }, { danger: true }); }
+  head('Pen and touch');
+  item('palm', 'Stylus only', () => { S.stylusOnly = !S.stylusOnly; S.stylusUserSet = true; prefs.set('stylusOnly', S.stylusOnly); prefs.set('stylusUserSet', true); openMenu(); toast(S.stylusOnly ? 'Fingers pan and zoom, stylus draws' : 'Fingers can draw too'); }, { keep: true, val: S.stylusOnly ? 'On' : 'Off' });
+  item('settings', 'Gestures and pen', settingsDialog);
 }
 async function linksDialog() {
   const d = S.doc, meta = (await db.getMeta(d.id)) || { id: d.id, title: d.title };
@@ -4456,7 +4529,7 @@ async function openSheet() {
    Wiring
    ===================================================================== */
 function wire() {
-  $('#btnBack').append(icon('home')); $('#btnUndo').append(icon('undo')); $('#btnRedo').append(icon('redo'));
+  $('#btnBack').append(icon('sidebar')); $('#btnShare').append(icon('share')); $('#btnUndo').append(icon('undo')); $('#btnRedo').append(icon('redo'));
   $('#btnPages').append(icon('pages')); $('#btnMore').append(icon('more'));
   document.title = 'Anota'; wireMinimap(); wireDockDrag();
   $('#fab').append(icon('plus', 30, 2.4)); $('#searchIcon').append(icon('search', 20));
@@ -4464,7 +4537,7 @@ function wire() {
   $('#sheetAdd').append(icon('plus', 16, 2.4), 'Add page'); $('#sheetClose').append(icon('x'));
   $('#focusExit').append(icon('focus', 20));
 
-  $('#btnBack').onclick = () => switchTo(null);
+  $('#btnBack').onclick = toggleDir; $('#btnShare').onclick = shareDialog;
   $('#btnUndo').onclick = () => undo(); $('#btnRedo').onclick = () => redo();
   $('#btnPages').onclick = () => { openSheet.sel = null; openSheet(); }; $('#pageInd').onclick = () => { openSheet.sel = null; openSheet(); };
   $('#btnMore').onclick = () => (menuOpen ? closeMenu() : (closePop(), openMenu()));
@@ -4592,8 +4665,10 @@ function pdfPageWords(T, idx) {
     const page = await T.pdf.getPage(idx + 1), v0 = page.getViewport({ scale: 1 }), sc = PW / v0.width, tc = await page.getTextContent(), words = [];
     for (const t of tc.items) {
       if (!t.str || !t.str.trim()) continue;
-      const tr = t.transform, hh = Math.max(6, (t.height || Math.abs(tr[3]) || 10) * sc), x0 = tr[4] * sc, y0 = (v0.height - tr[5]) * sc - hh * 0.82, W = (t.width || 0) * sc, n = t.str.length;
-      for (const m of t.str.matchAll(/\S+/g)) words.push({ t: m[0], x: x0 + W * m.index / n, y: y0, w: Math.max(2, W * m[0].length / n), h: hh * 1.15 });
+      const tr = t.transform, fs = Math.hypot(tr[2], tr[3]) || t.height || 10, hh = Math.max(6, fs * sc);
+      const [vx, vy] = v0.convertToViewportPoint(tr[4], tr[5]);            // honours the page's crop box and rotation
+      const x0 = vx * sc, y0 = vy * sc - hh * 0.82, W = (t.width || 0) * sc, n = t.str.length;
+      for (const m of t.str.matchAll(/\S+/g)) words.push({ t: m[0], x: x0 + W * m.index / n, y: y0, w: Math.max(2, W * m[0].length / n), h: hh * 1.12 });
       if (t.hasEOL && words.length) words[words.length - 1].eol = true;
     }
     page.cleanup(); T.pdfWords.set(idx, words); return words;
@@ -4706,7 +4781,7 @@ function findHits(q) {
   const d = S.doc; if (!d || !tokens(q).length) return [];
   const idx = Indexer.mem.get(d.id);
   const T = S.tab;
-  const pages = d.pages.map((pg, pi) => { const ip = (idx && (idx.pages.find((p) => p.id === pg.id) || idx.pages[pi])) || {}; const live = pg.pdf != null && T && T.pdfWords && T.pdfWords.get(pg.pdf); return { e: typedOf(pg, itemRect, rowsOf), f: live ? wordLines(live) : (ip.f || []), i: ip.i || [], m: ip.m || [] }; });
+  const pages = d.pages.map((pg, pi) => { const ip = (idx && (idx.pages.find((p) => p.id === pg.id) || idx.pages[pi])) || {}; const live = pg.pdf != null && T && T.pdfWords && T.pdfWords.get(pg.pdf); return { e: typedOf(pg, itemRect, rowsOf), f: pg.pdf != null ? [] : (ip.f || []), pw: live ? live.map((w) => [w.t, w.x, w.y, w.w, w.h]) : [], i: ip.i || [], m: ip.m || [] }; });
   const ys = S.layout.ys;
   return searchEntry({ pages }, q).map((x) => ({ ...x, wy: (ys[x.pi] || 0) + x.y, wx: x.x })).sort((a, b) => a.pi - b.pi || a.wy - b.wy || a.wx - b.wx);
 }
@@ -4727,7 +4802,7 @@ function openFind(q = '') {
   closePop(); closeMenu(); clearSel();
   const b = ensureFindBar(); b.hidden = false;
   S.find = { q, hits: [], i: -1 };
-  if (!PANE && Indexer.opts && ocrOn()) { const e = Indexer.mem.get(S.doc.id); if (!e || e.pending || e.updated < (S.doc.updated || 0)) Indexer.urgent(S.doc.id); }
+  if (!PANE && Indexer.opts && ocrOn()) { const id = S.doc.id; Promise.resolve().then(() => (saveTimer != null ? saveNow() : null)).catch(() => {}).then(() => { if (S.find && S.doc && S.doc.id === id) Indexer.urgent(id); }); }      // save what you just wrote first, so the reader sees it
   const inp = b.querySelector('input'); inp.value = q; setTimeout(() => { inp.focus(); inp.select(); }, 30);
   doFind(!!q);
 }

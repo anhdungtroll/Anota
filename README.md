@@ -62,6 +62,17 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.16
+- **Share** button in the top bar (and in the menu): this page or the whole note, as a PDF or as pictures. Uses your device's share sheet, or downloads on a computer.
+- The button beside the note name now opens a **side directory** of all folders and notes, with search, so you can jump between notes without going back to the home screen. (The Home tab is still there.)
+- The ••• menu is grouped (Note, Page, View, Pen and touch) and "Rename" is gone: tap the title instead.
+
+## What's new in 3.15
+- **PDF find** now highlights the exact word (it used to box a whole line, which went wrong on two-column pages) and uses the page's crop box so boxes line up.
+- **Whiteboard templates** are now movable, resizable objects placed in the middle of your view (including tables you build).
+- **Handwriting search**: searching now saves what you just wrote first, whiteboard writing far apart is read in separate blocks at its own size, and unsure readings are retried at other sizes.
+- The "Reading handwriting…" chip sits above the minimap.
+
 ## What's new in 3.14
 - **Templates.** Nine built in (weekly, daily, monthly calendar, meeting notes, to-do, study notes, habit tracker, meal planner, board). Start a notebook or whiteboard from one, or use ••• › Add template page. Templates are a drawing layer under your ink, so they never get selected or erased by accident, stay sharp at any zoom and follow dark paper.
 - **Your own templates.** "Build a table" (title, columns, rows, row names, tick boxes) and ••• › Save this page as a template (keeps ink, text and pictures). They live under Templates › Mine and are included in backups.

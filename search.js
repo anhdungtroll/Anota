@@ -34,17 +34,17 @@ export function searchEntry(entry, q) {
         else hits.push({ pi, kind, t: e[0], x: e[1], y: e[2], w: e[3], h: e[4], fuzzy: false });
       }
     }
-    // handwriting / pictures: words with positions; the page counts when every search word is found
-    for (const [kind, key] of [['ink', 'i'], ['img', 'm']]) {
+    // handwriting / pictures / exact PDF words: words with positions; the page counts when every search word is found
+    for (const [kind, key] of [['pdf', 'pw'], ['ink', 'i'], ['img', 'm']]) {
       const words = pg[key] || []; if (!words.length) continue;
       const nw = words.map((w) => norm(w[0]));
-      const found = ts.map((t) => nw.reduce((a, w, i) => (wordHit(w, t) ? (a.push(i), a) : a), []));
+      const found = ts.map((t) => nw.reduce((a, w, i) => ((kind === 'pdf' ? w.includes(t) : wordHit(w, t)) ? (a.push(i), a) : a), []));
       if (found.some((f) => !f.length)) continue;
       const seen = new Set();
       found.forEach((idxs) => idxs.forEach((i) => {
         if (seen.has(i)) return; seen.add(i);
         const w = words[i], from = Math.max(0, i - 3), to = Math.min(words.length, i + 5);
-        hits.push({ pi, kind, t: words.slice(from, to).map((x) => x[0]).join(' '), x: w[1], y: w[2], w: w[3], h: w[4], fuzzy: true });
+        hits.push({ pi, kind, t: words.slice(from, to).map((x) => x[0]).join(' '), x: w[1], y: w[2], w: w[3], h: w[4], fuzzy: kind !== 'pdf' });
       }));
     }
   });
@@ -53,7 +53,7 @@ export function searchEntry(entry, q) {
 
 /* ---------- building an index entry ---------- */
 const sigOf = (...parts) => parts.join('|');
-function strokeBox(st) { let a = 1e9, b = 1e9, c = -1e9, d = -1e9; const p = st.p; for (let i = 0; i < p.length; i += 3) { if (p[i] < a) a = p[i]; if (p[i] > c) c = p[i]; if (p[i + 1] < b) b = p[i + 1]; if (p[i + 1] > d) d = p[i + 1]; } return [a, b, c, d]; }
+export function strokeBox(st) { let a = 1e9, b = 1e9, c = -1e9, d = -1e9; const p = st.p; for (let i = 0; i < p.length; i += 3) { if (p[i] < a) a = p[i]; if (p[i] > c) c = p[i]; if (p[i + 1] < b) b = p[i + 1]; if (p[i + 1] > d) d = p[i + 1]; } return [a, b, c, d]; }
 const inkStrokes = (pg) => (pg.strokes || []).filter((s) => s.p && s.p.length >= 6 && s.t !== 'hl' && !s.sh);
 function inkSig(pg) {
   const st = inkStrokes(pg); let n = 0, h = 0;
@@ -74,7 +74,7 @@ export function typedOf(pg, rectOf, rowsOf) {
   }
   return out;
 }
-function renderChunk(strokes, ox, oy, w, h, SCALE) {
+export function renderChunk(strokes, ox, oy, w, h, SCALE) {
   const c = document.createElement('canvas'); c.width = Math.max(8, Math.ceil(w * SCALE)); c.height = Math.max(8, Math.ceil(h * SCALE));
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   g.strokeStyle = '#000'; g.lineCap = g.lineJoin = 'round';
@@ -89,15 +89,15 @@ function renderChunk(strokes, ox, oy, w, h, SCALE) {
 }
 /* The engine reads best when letters are about 25-40 px tall; much bigger or smaller and it reads nothing.
    So each page is drawn at a scale chosen from the real size of its strokes. */
-function pickScale(boxes) {
+export function pickScale(boxes) {
   const hs = boxes.map((b) => b[3] - b[1]).filter((v) => v > 4).sort((a, b) => a - b);
   const med = hs.length ? hs[Math.floor(hs.length / 2)] : 30;
-  return Math.min(2.2, Math.max(0.25, 34 / med));
+  return Math.min(2.2, Math.max(0.25, 38 / med));
 }
 const strokeSig = (list) => { let n = 0, h = 0; for (const s of list) { n += s.p.length; h = (h * 31 + Math.round(s.p[0] * 3) + Math.round(s.p[1] * 7) + s.p.length + Math.round(s.p[s.p.length - 3] * 5)) | 0; } return list.length + ':' + n + ':' + h; };
 /* Handwriting is read in blocks (a block is a paragraph: lines that sit close together). Only blocks whose strokes
    changed are read again, so writing a new line costs one small read, not a whole page. */
-function segmentBands(st, boxes) {
+export function segmentBands(st, boxes) {
   const order = st.map((_, i) => i).sort((a, b) => (boxes[a][1] + boxes[a][3]) - (boxes[b][1] + boxes[b][3]));
   const hs = boxes.map((b) => b[3] - b[1]).filter((v) => v > 4).sort((a, b) => a - b), med = hs.length ? hs[hs.length >> 1] : 30, gap = Math.max(10, med * 1.1);
   const bands = []; let cur = null;
@@ -106,9 +106,19 @@ function segmentBands(st, boxes) {
     if (cur && b[1] <= cur.y1 + gap) { cur.ix.push(i); cur.y1 = Math.max(cur.y1, b[3]); cur.y0 = Math.min(cur.y0, b[1]); cur.x0 = Math.min(cur.x0, b[0]); cur.x1 = Math.max(cur.x1, b[2]); }
     else { cur = { ix: [i], y0: b[1], y1: b[3], x0: b[0], x1: b[2] }; bands.push(cur); }
   }
-  return bands.map((b) => ({ ...b, strokes: b.ix.map((i) => st[i]), boxes: b.ix.map((i) => boxes[i]) }));
+  // a wide band (e.g. on a whiteboard, notes far apart on the same row) is split where there is a big empty gap, so each block is read at its own size
+  const xgap = Math.max(90, med * 3.4), out = [];
+  for (const b of bands) {
+    const ix = b.ix.slice().sort((p, q) => boxes[p][0] - boxes[q][0]); let g = null;
+    for (const i of ix) {
+      const bx = boxes[i];
+      if (g && bx[0] <= g.x1 + xgap) { g.ix.push(i); g.x1 = Math.max(g.x1, bx[2]); g.y0 = Math.min(g.y0, bx[1]); g.y1 = Math.max(g.y1, bx[3]); }
+      else { g = { ix: [i], x0: bx[0], x1: bx[2], y0: bx[1], y1: bx[3] }; out.push(g); }
+    }
+  }
+  return out.map((b) => ({ ...b, strokes: b.ix.map((i) => st[i]), boxes: b.ix.map((i) => boxes[i]) }));
 }
-async function readBand(band, pace) {
+export async function readBand(band, pace) {
   const pad = 14, x0 = band.x0 - pad, y0 = band.y0 - pad, W = band.x1 - band.x0 + 2 * pad, H = band.y1 - band.y0 + 2 * pad;
   const base = Math.min(pickScale(band.boxes), 2300 / Math.max(W, 1));
   const attempt = async (SC) => {
@@ -119,12 +129,16 @@ async function readBand(band, pace) {
       if (!inTile.length) continue;
       await pace();
       const res = await ocr.recognize(renderChunk(inTile, x0, oy, W, h, SC));
-      for (const r of res) words.push([r.t, Math.round(x0 + r.x / SC), Math.round(oy + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]);
+      for (const r of res) { const w = [r.t, Math.round(x0 + r.x / SC), Math.round(oy + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]; w.c = r.c; words.push(w); }
     }
     return words;
   };
+  const score = (ws) => ws.reduce((a, w) => a + (w.c || 0) * (w[0].replace(/[^\p{L}\p{N}]/gu, '').length), 0), conf = (ws) => { const n = ws.reduce((a, w) => a + w[0].length, 0); return n ? ws.reduce((a, w) => a + (w.c || 0) * w[0].length, 0) / n : 0; };
   let words = await attempt(base);
-  if (!words.length && band.strokes.length >= 3) { words = await attempt(base * 0.6); if (!words.length) words = await attempt(Math.min(2.4, base * 1.6)); }
+  if ((!words.length || conf(words) < 85) && band.strokes.length >= 3) {          // unsure or nothing: try other sizes and keep the most confident reading
+    for (const k of [1.3, 0.75, 1.7, 0.55]) { const alt = await attempt(Math.min(2.4, Math.max(0.2, base * k))); if (score(alt) > score(words)) words = alt; if (conf(words) >= 85) break; }
+  }
+  words = words.map((w) => [w[0], w[1], w[2], w[3], w[4]]);
   return words;
 }
 async function ocrInk(pg, pace, prevBands, langs) {
