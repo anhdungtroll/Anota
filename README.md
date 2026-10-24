@@ -62,6 +62,12 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.12
+- Settings redesigned: a side menu (Look, Toolbar, S Pen, Drawing, Touch, About) so each page is short; turns into a top strip on narrow screens.
+- Hold-on-a-loop shapes are never filled now.
+- Shape recognition prefers basic shapes: circle, oval, square, rectangle, rounded rectangle, triangle, diamond, pentagon, hexagon.
+- Selections now have 8 handles: corners resize evenly, edge handles stretch ink, shapes and images in one direction (bottom-right corner and the rotate handle work as before).
+
 ## What's new in 3.11
 - Pen-tip tool icon is now a small bare icon (no box). Still switchable in Settings > S Pen.
 

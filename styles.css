@@ -652,3 +652,17 @@ dialog .dlg-actions{flex:none;margin-top:0;padding-top:12px;border-top:1px solid
 .insmenu .ins:hover .ico{background:var(--accent-soft)}
 
 dialog.wide{width:min(960px,calc(100vw - 20px))}
+
+dialog.setwide{width:min(720px,calc(100vw - 20px));height:min(640px,90vh)}
+.settings{display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:start}
+.setnav{position:sticky;top:0;display:flex;flex-direction:column;gap:4px;padding-top:2px}
+.setnavb{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;font-weight:700;font-size:14px;color:var(--muted);text-align:left}
+.setnavb .svg{flex:none}
+.setnavb:hover{background:var(--panel2)}
+.setnavb.on{background:var(--accent-soft);color:var(--accent)}
+.setpane{min-width:0;padding-bottom:8px}
+@media (max-width:620px){
+  .settings{display:block}
+  .setnav{flex-direction:row;overflow-x:auto;scrollbar-width:none;background:var(--panel);z-index:2;padding:0 0 8px;margin-bottom:6px}
+  .setnavb{flex:none;padding:8px 12px}
+}

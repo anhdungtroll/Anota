@@ -151,7 +151,7 @@ function modal({ title, body, actions }) {
     h('div', { class: 'dlg-actions' }, (actions || []).map((a) =>
       h('button', { class: 'btn ' + (a.kind || ''), onclick: () => { if (a.fn && a.fn() === false) return; close(); } }, a.label)))
   );
-  d.classList.remove('wide'); d.onclose = null;
+  d.classList.remove('wide', 'setwide'); d.onclose = null;
   d.showModal();
   return close;
 }
@@ -178,7 +178,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.11 (build 1)';
+const APP_VERSION = '3.12 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -821,7 +821,7 @@ function frame() {
   }
   if (S.hover && S.penIcon && !a && !S.mode) {
     const ic = { pen: 'pen', hl: 'hl', eraser: 'eraser', lasso: 'lasso', shape: 'shape', text: 'text', laser: 'laser', hand: 'hand', insert: 'insert', comment: 'comment' }[S.tool] || S.tool;
-    const d = IC[S.tool === 'pen' ? (IC[S.penType] ? S.penType : 'pen') : ic] || IC[ic] || IC.pen;
+    const d = IC[S.tool === 'pen' ? (IC[S.penType] ? S.penType : 'pen') : ic] || IC[ic] || IC.ball;
     const [hx, hy] = toWorld(S.hover.x, S.hover.y), u = 1 / s, sz = 15 * u;
     ctx.save(); ctx.translate(hx + 8 * u, hy - 8 * u - sz);
     ctx.scale(sz / 24, sz / 24); ctx.lineCap = ctx.lineJoin = 'round';
@@ -854,7 +854,19 @@ function frame() {
       }
     }
     if (resizable()) {
-      ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.lineWidth = 2.5 / s;
+      ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.lineWidth = 2 / s;
+      const bw = b[2] - b[0], bh = b[3] - b[1], one = sl.items.length === 1 ? sl.items[0].o : null;
+      for (const hd of selHandles()) {
+        if (hd.id === 'br') continue;
+        if (hd.type === 'x' && bh < 18) continue; if (hd.type === 'y' && bw < 18) continue;
+        if (one && one.k === 'text' && hd.id !== 'r') continue;
+        ctx.beginPath();
+        if (hd.type === 'corner') ctx.arc(hd.x, hd.y, 7 / s, 0, 6.2832);
+        else if (hd.type === 'x') ctx.roundRect(hd.x - 4.5 / s, hd.y - 11 / s, 9 / s, 22 / s, 4.5 / s);
+        else ctx.roundRect(hd.x - 11 / s, hd.y - 4.5 / s, 22 / s, 9 / s, 4.5 / s);
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.lineWidth = 2.5 / s;
       ctx.beginPath(); ctx.arc(b[2] + sl.dx + 6, b[3] + sl.dy + 6, 12 / s, 0, 6.2832); ctx.fill(); ctx.stroke();
       ctx.lineWidth = 2 / s; ctx.beginPath();
       const hx = b[2] + sl.dx + 6, hy = b[3] + sl.dy + 6, q = 4.5 / s;
@@ -1229,6 +1241,19 @@ function rotateSel(d) {
   const after = rotState();
   commit({ undo() { setRotState(before); }, redo() { setRotState(after); } });
   renderSelbar(); requestFrame(true);
+}
+/* eight handles around the selection: corners resize evenly, edge handles stretch one way */
+function selHandles() {
+  const sl = S.sel, b = sl.b, x0 = b[0] + sl.dx, y0 = b[1] + sl.dy, x1 = b[2] + sl.dx, y1 = b[3] + sl.dy, mx = (x0 + x1) / 2, my = (y0 + y1) / 2, p = 6;
+  return [
+    { id: 'br', x: x1 + p, y: y1 + p, ax: x0, ay: y0, type: 'corner' },
+    { id: 'tl', x: x0 - p, y: y0 - p, ax: x1, ay: y1, type: 'corner' },
+    { id: 'tr', x: x1 + p, y: y0 - p, ax: x0, ay: y1, type: 'corner' },
+    { id: 'bl', x: x0 - p, y: y1 + p, ax: x1, ay: y0, type: 'corner' },
+    { id: 'r', x: x1 + p, y: my, ax: x0, ay: my, type: 'x' },
+    { id: 'l', x: x0 - p, y: my, ax: x1, ay: my, type: 'x' },
+    { id: 'b', x: mx, y: y1 + p, ax: mx, ay: y0, type: 'y' },
+    { id: 't', x: mx, y: y0 - p, ax: mx, ay: y1, type: 'y' }];
 }
 function resizable() { return !!(S.sel && S.sel.items.length); }
 function placeSelbar() {
@@ -1904,11 +1929,20 @@ function beginTool(tool, e, sx, sy) {
           return;
         }
       }
-      if (resizable() && Math.hypot(wx - (b[2] + 6), wy - (b[3] + 6)) < 22 / S.view.s) {
-        const one = S.sel.items.length === 1 ? S.sel.items[0].o : null;
-        if (one && one.k === 'text') S.act = { ...base, kind: 'resize', mode: 'w', o: one, from: one.w };
-        else S.act = { ...base, kind: 'resize', mode: 'k', sn: snapSel(), ax: b[0], ay: b[1], d0: Math.max(20, Math.hypot(b[2] + 6 - b[0], b[3] + 6 - b[1])), k: 1 };
-        return;
+      if (resizable()) {
+        const one = S.sel.items.length === 1 ? S.sel.items[0].o : null, sc = S.view.s;
+        const hs = selHandles(), bw = b[2] - b[0], bh = b[3] - b[1];
+        let hit = null, bd = 1e9;
+        for (const hd of hs) {
+          if (hd.type === 'x' && bh < 18) continue; if (hd.type === 'y' && bw < 18) continue;
+          const d = Math.hypot(wx - hd.x, wy - hd.y), reach = (hd.id === 'br' ? 22 : hd.type === 'corner' ? 18 : 16) / sc;
+          if (d < reach && d < bd) { bd = d; hit = hd; }
+        }
+        if (hit) {
+          if (hit.id === 'br' && one && one.k === 'text') S.act = { ...base, kind: 'resize', mode: 'w', o: one, from: one.w };
+          else S.act = { ...base, kind: 'resize', mode: hit.type === 'corner' ? 'k' : hit.type, hd: hit, sn: snapSel(), ax: hit.ax, ay: hit.ay, kx: 1, ky: 1 };
+          return;
+        }
       }
       if (wx > b[0] - 14 && wx < b[2] + 14 && wy > b[1] - 14 && wy < b[3] + 14) { S.act = { ...base, kind: 'selmove', ox: wx, oy: wy }; return; }
       clearSel();
@@ -1972,7 +2006,13 @@ function feed(e, sx, sy) {
     S.sel.dx = wx - a.ox; S.sel.dy = wy - a.oy;
   } else if (a.kind === 'resize') {
     if (a.mode === 'w') { a.o.w = Math.max(110, wx - a.o.x); }
-    else { a.k = clamp(Math.hypot(wx - a.ax, wy - a.ay) / a.d0, 0.15, 8); applyScale(a.sn, a.k, a.ax, a.ay); }
+    else {
+      const hd = a.hd, K = (v) => clamp(v, 0.1, 10);
+      if (a.mode === 'x') { a.kx = K((wx - a.ax) / (hd.x - a.ax)); a.ky = 1; }
+      else if (a.mode === 'y') { a.ky = K((wy - a.ay) / (hd.y - a.ay)); a.kx = 1; }
+      else { const vx = hd.x - a.ax, vy = hd.y - a.ay; a.kx = a.ky = K(((wx - a.ax) * vx + (wy - a.ay) * vy) / (vx * vx + vy * vy)); }
+      applyStretch(a.sn, a.kx, a.ky, a.ax, a.ay);
+    }
     boundsOfSel();
   }
 }
@@ -1980,19 +2020,25 @@ function feed(e, sx, sy) {
 function snapSel() {
   return S.sel.items.map((it) => {
     const o = it.o, top = S.layout.ys[it.pi];
-    return o.p ? { o, top, p: o.p.slice(), s: o.s } : { o, top, x: o.x, y: o.y, w: o.w, s: o.s };
+    return o.p ? { o, top, p: o.p.slice(), s: o.s } : { o, top, x: o.x, y: o.y, w: o.w, s: o.s, ar: o.ar };
   });
 }
-function applyScale(snap, k, ax, ay) {
+function applyScale(snap, k, ax, ay) { applyStretch(snap, k, k, ax, ay); }
+/* scale the selection by kx / ky about a world-space anchor (kx = ky is the classic uniform resize) */
+function applyStretch(snap, kx, ky, ax, ay) {
+  const uni = Math.abs(kx - ky) < 1e-6, ku = Math.sqrt(kx * ky);
   for (const r of snap) {
     const o = r.o;
     if (o.p) {
-      for (let i = 0; i < r.p.length; i += 3) { o.p[i] = ax + (r.p[i] - ax) * k; o.p[i + 1] = ay + (r.p[i + 1] + r.top - ay) * k - r.top; }
-      o.s = r.s * k; bbCache.delete(o);
+      for (let i = 0; i < r.p.length; i += 3) { o.p[i] = ax + (r.p[i] - ax) * kx; o.p[i + 1] = ay + (r.p[i + 1] + r.top - ay) * ky - r.top; }
+      o.s = r.s * (uni ? kx : 1); bbCache.delete(o);
     } else {
-      o.x = ax + (r.x - ax) * k; o.y = ay + (r.y + r.top - ay) * k - r.top;
-      if (r.w != null && o.k !== 'link' && o.k !== 'jump') o.w = r.w * k;
-      if (r.s != null) o.s = r.s * k;
+      o.x = ax + (r.x - ax) * kx; o.y = ay + (r.y + r.top - ay) * ky - r.top;
+      if (o.k === 'img' && !uni && !o.r) { o.w = r.w * kx; if (r.ar) o.ar = r.ar * kx / ky; }
+      else if (o.k === 'img' && !uni) { o.w = r.w * ku; }
+      else if (r.w != null && o.k !== 'link' && o.k !== 'jump') o.w = r.w * (o.k === 'text' || uni ? kx : ku);
+      if (r.s != null && uni) o.s = r.s * kx;
+      if (r.ar != null && (uni || o.k !== 'img')) o.ar = r.ar;
     }
   }
   baseDirty = true;
@@ -2083,6 +2129,26 @@ function recognize(P) {
   if (simp.length > 2 && dist2p(simp[0], simp[simp.length - 1]) < 0.22 * len) simp = simp.slice(0, -1);
   const poly = cleanPoly(simp);
   if (poly.length === 3) return { kind: 'poly', pts: poly };
+  /* basic shapes first: circle, oval, square, rectangle, rounded rectangle are tried against the whole loop before any many-sided polygon */
+  if (poly.length !== 4 || true) {
+    const err = (sh) => { const O = outline(sh); let t = 0; for (const q of P) { let best = 1e9; for (let i = 0; i < O.length - 1; i++) best = Math.min(best, segDist2(q[0], q[1], O[i][0], O[i][1], O[i + 1][0], O[i + 1][1])); t += Math.sqrt(best); } return t / n / diag; };
+    const ccx = (bb[0] + bb[2]) / 2, ccy = (bb[1] + bb[3]) / 2;
+    const cands = [];
+    if (w > 28 && hh > 28) {
+      const el = { kind: 'ellipse', cx: ccx, cy: ccy, rx: w / 2, ry: hh / 2 };
+      if (Math.abs(el.rx - el.ry) / Math.max(el.rx, el.ry) < 0.14) el.rx = el.ry = (el.rx + el.ry) / 2;
+      cands.push([err(el), 0, el]);
+      let rb = bb;
+      if (Math.abs(w - hh) / Math.max(w, hh) < 0.12) { const m = (w + hh) / 2; rb = [ccx - m / 2, ccy - m / 2, ccx + m / 2, ccy + m / 2]; }
+      cands.push([err({ kind: 'rect', bb: rb }), 1, { kind: 'rect', bb: rb }]);
+      const rr = { kind: 'rrect', bb: rb, r: Math.min(rb[2] - rb[0], rb[3] - rb[1]) * 0.22 };
+      cands.push([err(rr), 2, rr]);
+    }
+    cands.sort((p, q) => p[0] - q[0]);
+    let pe = 9;                                          // how well a straight-sided polygon (pentagon, hexagon...) fits instead
+    if (poly.length >= 5 && poly.length <= 8) { let tot = 0; for (const q of P) { let best = 1e9; for (let i = 0; i < poly.length; i++) { const a2 = poly[i], b2 = poly[(i + 1) % poly.length]; best = Math.min(best, Math.sqrt(segDist2(q[0], q[1], a2[0], a2[1], b2[0], b2[1]))); } tot += best; } pe = tot / n / diag; }
+    if (cands.length && cands[0][0] < 0.026 && poly.length !== 3 && !(pe < cands[0][0] * 0.8)) return cands[0][2];
+  }
   if (poly.length >= 5 && poly.length <= 8) {   // straight sides (pentagon, hexagon...) vs. a round loop
     let tot = 0;
     for (const q of P) { let best = 1e9; for (let i = 0; i < poly.length; i++) { const a2 = poly[i], b2 = poly[(i + 1) % poly.length]; best = Math.min(best, Math.sqrt(segDist2(q[0], q[1], a2[0], a2[1], b2[0], b2[1]))); } tot += best; }
@@ -2114,6 +2180,12 @@ function outline(sh) {
   if (sh.kind === 'line') return [sh.a, sh.b];
   if (sh.kind === 'rect') { const [x0, y0, x1, y1] = sh.bb; return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]; }
   if (sh.kind === 'poly') return [...sh.pts, sh.pts[0]];
+  if (sh.kind === 'rrect') {
+    const [x0, y0, x1, y1] = sh.bb, r = sh.r, o = [];
+    const arc = (cx, cy, a0) => { for (let i = 0; i <= 8; i++) { const t = a0 + i / 8 * Math.PI / 2; o.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]); } };
+    arc(x1 - r, y0 + r, -Math.PI / 2); arc(x1 - r, y1 - r, 0); arc(x0 + r, y1 - r, Math.PI / 2); arc(x0 + r, y0 + r, Math.PI);
+    o.push(o[0]); return o;
+  }
   const o = []; for (let i = 0; i <= 72; i++) { const t = i / 72 * Math.PI * 2; o.push([sh.cx + sh.rx * Math.cos(t), sh.cy + sh.ry * Math.sin(t)]); }
   return o;
 }
@@ -2158,7 +2230,6 @@ function trySnap(a) {
     if (!S.sel) toast('Nothing inside that loop');
     requestFrame(true); return;
   }
-  if (S.shapeFill && sh.kind !== 'line') a.st.fl = 1;
   const N = 72, from = resample(P, N);
   let to = resample(outline(sh), N);
   if (sh.kind !== 'line') to = alignTo(from, to);
@@ -2399,7 +2470,7 @@ function cancelAct() {
   if (a && a.kind === 'erase' && a.edits.length) finishAct();
   else if (a && a.kind === 'selmove') { S.sel.dx = S.sel.dy = 0; }
   else if (a && a.kind === 'rot') { setRotState(a.sn); }
-  else if (a && a.kind === 'resize') { if (a.mode === 'w') a.o.w = a.from; else applyScale(a.sn, 1, a.ax, a.ay); boundsOfSel(); }
+  else if (a && a.kind === 'resize') { if (a.mode === 'w') a.o.w = a.from; else applyStretch(a.sn, 1, 1, a.ax, a.ay); boundsOfSel(); }
   S.act = null; requestFrame(true);
 }
 function finishAct() {
@@ -2461,9 +2532,9 @@ function finishAct() {
     if (a.mode === 'w') {
       const o = a.o, from = a.from, to = o.w;
       if (Math.abs(to - from) > 0.5) commit({ undo() { o.w = from; }, redo() { o.w = to; } });
-    } else if (Math.abs(a.k - 1) > 0.01) {
-      const snap = a.sn, k = a.k, ax = a.ax, ay = a.ay;
-      commit({ undo() { applyScale(snap, 1, ax, ay); }, redo() { applyScale(snap, k, ax, ay); } });
+    } else if (Math.abs(a.kx - 1) > 0.01 || Math.abs(a.ky - 1) > 0.01) {
+      const snap = a.sn, kx = a.kx, ky = a.ky, ax = a.ax, ay = a.ay;
+      commit({ undo() { applyStretch(snap, 1, 1, ax, ay); }, redo() { applyStretch(snap, kx, ky, ax, ay); } });
     }
     boundsOfSel();
   }
@@ -3995,30 +4066,37 @@ function toolbarRows(repaint) {
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Tools on the toolbar', h('small', {}, 'Hide what you never use and put your favourites first.')), list),
   ].filter(Boolean);
 }
+let setTab = 'look';
 function settingsDialog() {
   const body = h('div', { class: 'settings' });
   const save = () => prefs.set('gest', S.gest);
   const row = (label, hint, opts, get, set) => h('div', { class: 'srow' },
     h('div', { class: 'slabel' }, label, hint ? h('small', {}, hint) : null),
     h('div', { class: 'segs mini' }, opts.map(([v, l]) => h('button', { class: 'seg' + (get() === v ? ' on' : ''), onclick: () => { set(v); save(); paint(); } }, l))));
-  const paint = () => {
-    body.innerHTML = '';
-    const cur = document.documentElement.dataset.style;
-    body.append(
-      h('div', { class: 'lbl' }, 'Look'),
-      h('div', { class: 'stylecards' }, STYLES.map(([id, label]) => h('button', { class: 'scard' + (cur === id ? ' on' : ''), onclick: () => { prefs.set('style', id); applyStyle(id); requestFrame(true); paint(); } },
+  const TABS = [['look', 'Look', 'paper'], ['toolbar', 'Toolbar', 'grip'], ['pen', 'S Pen', 'ball'], ['draw', 'Drawing', 'shape'], ['touch', 'Touch', 'hand'], ['about', 'About', 'book']];
+  const curStyle = () => document.documentElement.dataset.style;
+  const panes = {
+    look: () => [
+      h('div', { class: 'stylecards' }, STYLES.map(([id, label]) => h('button', { class: 'scard' + (curStyle() === id ? ' on' : ''), onclick: () => { prefs.set('style', id); applyStyle(id); requestFrame(true); paint(); } },
         h('span', { class: 'sprev ' + (COLOUR_THEMES.has(id) ? 'custom' : id), style: COLOUR_THEMES.has(id) ? customPreview(id) : '' }, h('i'), h('i'), h('i')), label,
         h('small', {}, { glass: 'Frosted and airy', clay: 'Soft and puffy', og: 'The original', midnight: 'Deep and calm', paper: 'Warm and inky', custom: 'Your own colours' }[id])))),
-      ...(cur === 'custom' ? [customRow(paint)] : []),
-      h('div', { class: 'lbl', style: 'margin-top:14px' }, 'Toolbar'),
-      ...toolbarRows(paint),
-      h('div', { class: 'lbl', style: 'margin-top:14px' }, 'Finger gestures'),
+      ...(curStyle() === 'custom' ? [customRow(paint)] : []),
+    ],
+    toolbar: () => [
+      ...toolbarRows(paint)],
+    touch: () => [
       row('Two-finger tap', 'Tap the page with two fingers', [['undo', 'Undo'], ['redo', 'Redo'], ['none', 'Off']], () => S.gest.two, (v) => (S.gest.two = v)),
       row('Three-finger tap', 'Tap the page with three fingers', [['redo', 'Redo'], ['undo', 'Undo'], ['none', 'Off']], () => S.gest.three, (v) => (S.gest.three = v)),
-      row('Finger input', 'Palm rejection', [[false, 'Draw'], [true, 'Pen only']], () => S.stylusOnly, (v) => { S.stylusOnly = v; S.stylusUserSet = true; prefs.set('stylusOnly', v); prefs.set('stylusUserSet', true); }),
-      h('div', { class: 'lbl', style: 'margin-top:14px' }, 'S Pen'),
+      row('Finger input', 'Palm rejection', [[false, 'Draw'], [true, 'Pen only']], () => S.stylusOnly, (v) => { S.stylusOnly = v; S.stylusUserSet = true; prefs.set('stylusOnly', v); prefs.set('stylusUserSet', true); })],
+    pen: () => [
       row('Hold the pen button while writing', 'Works like the eraser end', [['eraser', 'Eraser'], ['lasso', 'Select'], ['none', 'Off']], () => S.gest.hold, (v) => (S.gest.hold = v)),
       row('Click the pen button (hovering)', 'Quick action without touching the screen', [['toggle', 'Eraser on/off'], ['undo', 'Undo'], ['none', 'Off']], () => S.gest.click, (v) => (S.gest.click = v)),
+      row('Tool icon by the pen tip', 'A tiny icon of the current tool beside the S Pen tip while hovering', [[true, 'Show'], [false, 'Hide']], () => S.penIcon, (v) => { S.penIcon = v; prefs.set('penIcon', v); requestFrame(); }),
+      row('Blue pen-tip ring', 'The app’s own marker that follows the S Pen. Turn off if you only want Android’s tip', [[true, 'Show'], [false, 'Hide']], () => S.penRing, (v) => { S.penRing = v; prefs.set('penRing', v); requestFrame(); }),
+      penAlignRow(paint),
+      h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'S Pen button test', h('small', {}, 'Shows exactly what your tablet reports when you press the button')),
+        h('div', { class: 'segs mini' }, h('button', { class: 'seg', onclick: () => { $('#dlg').close(); setTimeout(penTestDialog, 80); } }, 'Open test')))],
+    draw: () => [
       row('Hold still to perfect a shape', 'Draw a line, circle, box or triangle and pause', [[true, 'On'], [false, 'Off']], () => S.holdShape, (v) => { S.holdShape = v; prefs.set('holdShape', v); }),
       (() => {
         const lab = h('small', {}, ''), sl = h('input', { type: 'range', min: 0.3, max: 2, step: 0.1, value: S.holdMs / 1000, 'aria-label': 'Hold-still delay' });
@@ -4027,17 +4105,18 @@ function settingsDialog() {
         return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Hold-still delay', lab), h('div', { class: 'sizerow' }, h('span', { class: 'rl' }, 'Quick'), sl, h('span', { class: 'rl' }, 'Slow')));
       })(),
       row('Hold still to smooth a curve', 'Draw a wobbly line and pause: it becomes a smooth curve', [[true, 'On'], [false, 'Off']], () => S.holdSmooth, (v) => { S.holdSmooth = v; prefs.set('holdSmooth', v); }),
-      row('Tool icon by the pen tip', 'A tiny icon of the current tool beside the S Pen tip while hovering', [[true, 'Show'], [false, 'Hide']], () => S.penIcon, (v) => { S.penIcon = v; prefs.set('penIcon', v); requestFrame(); }),
       row('Scribble to erase', 'Scratch back and forth over ink to rub it out', [[true, 'On'], [false, 'Off']], () => S.scribble, (v) => { S.scribble = v; prefs.set('scribble', v); }),
-      row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); }),
-      row('Blue pen-tip ring', 'The app’s own marker that follows the S Pen. Turn off if you only want Android’s tip', [[true, 'Show'], [false, 'Hide']], () => S.penRing, (v) => { S.penRing = v; prefs.set('penRing', v); requestFrame(); }),
-      penAlignRow(paint),
-      h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'S Pen button test', h('small', {}, 'Shows exactly what your tablet reports when you press the button')),
-        h('div', { class: 'segs mini' }, h('button', { class: 'seg', onclick: () => { $('#dlg').close(); setTimeout(penTestDialog, 80); } }, 'Open test'))));
+      row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); })],
+    about: () => [h('p', { class: 'note' }, 'Anota ' + APP_VERSION), h('p', { class: 'note' }, 'Everything is stored on this device. Notes work offline.')],
+  };
+  const paint = () => {
+    body.innerHTML = '';
+    const nav = h('nav', { class: 'setnav', role: 'tablist' }, TABS.map(([k, l, ic]) => h('button', { class: 'setnavb' + (setTab === k ? ' on' : ''), role: 'tab', 'aria-selected': String(setTab === k), onclick: () => { setTab = k; paint(); const db2 = body.closest('.dlg-body'); if (db2) db2.scrollTop = 0; } }, icon(ic, 18), h('span', {}, l))));
+    body.append(nav, h('div', { class: 'setpane' }, panes[setTab]().flat(2).filter(Boolean)));
   };
   paint();
-  body.append(h('p', { class: 'note', style: 'margin-top:12px' }, 'Anota ' + APP_VERSION));
   modal({ title: 'Settings', body, actions: [{ label: 'Done', kind: 'primary' }] });
+  $('#dlg').classList.add('setwide');
 }
 function penAlignRow(repaint) {
   const save = () => prefs.set('penCal', S.penCal);
