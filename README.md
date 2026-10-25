@@ -62,6 +62,11 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.17
+- **Find bar** now sits under the top bar on the right (no longer over the note name). Drag the grip on its left to move it anywhere; it remembers the spot. Double-tap the grip to put it back.
+- **Handwriting reading rebuilt for accuracy.** Each line is read on its own (the engine is much better at one line than a whole page); accents, dots and i-dots stay with their line; unsure lines are read again at other sizes and every reading is searchable. Matching tolerates look-alike letters (rn/m, cl/d, i/l/1, o/0…) and words split in two by the reader.
+- Tested with real pen-stroke fonts (print, script, Vietnamese with accents) at sizes 30–80: printed English 100%, Vietnamese 29/30, ornate cursive roughly 60–70%.
+
 ## What's new in 3.16
 - **Share** button in the top bar (and in the menu): this page or the whole note, as a PDF or as pictures. Uses your device's share sheet, or downloads on a computer.
 - The button beside the note name now opens a **side directory** of all folders and notes, with search, so you can jump between notes without going back to the home screen. (The Home tab is still there.)

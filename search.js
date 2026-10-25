@@ -5,19 +5,33 @@ import * as ocr from './ocr.js';
 
 export const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase();
 export const tokens = (q) => norm(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-function lev(a, b, max) {            // bounded edit distance
-  if (Math.abs(a.length - b.length) > max) return max + 1;
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i]; let best = i;
-    for (let j = 1; j <= b.length; j++) { const v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); cur.push(v); if (v < best) best = v; }
-    if (best > max) return max + 1; prev = cur;
+/* Handwriting is read imperfectly, so a word matches when it is close: letters that look alike are treated as the same,
+   and a search word may match a slip-up inside a longer read word (approximate substring match). */
+const look = (s) => s.replace(/rn/g, 'm').replace(/cl/g, 'd').replace(/vv/g, 'w').replace(/[1|!i]/g, 'l').replace(/0/g, 'o').replace(/5/g, 's').replace(/v/g, 'u').replace(/q/g, 'g').replace(/[nh]/g, 'n').replace(/[ao]/g, 'o').replace(/[ec]/g, 'e');
+const fuzzyMax = (t) => (t.length >= 8 ? 3 : t.length >= 6 ? 2 : t.length >= 4 ? 1 : 0);
+function approxSub(t, w, max) {         // smallest edit distance between t and any part of w (Sellers)
+  const m = t.length; if (!m) return 0;
+  let prev = new Array(m + 1); for (let i = 0; i <= m; i++) prev[i] = i;
+  let best = m;
+  for (let j = 1; j <= w.length; j++) {
+    const cur = [0];
+    for (let i = 1; i <= m; i++) cur[i] = Math.min(prev[i] + 1, cur[i - 1] + 1, prev[i - 1] + (t[i - 1] === w[j - 1] ? 0 : 1));
+    if (cur[m] < best) best = cur[m]; prev = cur;
   }
-  return prev[b.length];
+  return best;
 }
-const fuzzyMax = (t) => (t.length >= 9 ? 2 : t.length >= 4 ? 1 : 0);
-/** does a recognised word match a search token (exact part, or one slip for longer words: handwriting is read imperfectly) */
-const wordHit = (w, t) => w.includes(t) || (t.length >= 4 && w.length >= 3 && lev(w, t, fuzzyMax(t)) <= fuzzyMax(t));
+const fullLev = (a, b) => { let prev = Array.from({ length: b.length + 1 }, (_, i) => i); for (let i = 1; i <= a.length; i++) { const cur = [i]; for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; } return prev[b.length]; };
+/** does a read word match a search token */
+const wordHit = (w, t) => {
+  if (w.includes(t)) return true;
+  const m = fuzzyMax(t), lw = look(w), lt = look(t);
+  if (t.length >= 3 && (lw === lt || (t.length >= 4 && lw.includes(lt)))) return true;
+  if (!m) return false;
+  if (lw.includes(lt)) return true;
+  if (lw.length < lt.length - m) return false;
+  if (lw.length <= lt.length + 1) return fullLev(lt, lw) <= m;             // about the same length: compare whole words
+  return approxSub(lt, lw, m) <= m;                                          // read word has extra junk around it
+};
 
 /* ---------- searching one index entry ---------- */
 export function searchEntry(entry, q) {
@@ -36,8 +50,13 @@ export function searchEntry(entry, q) {
     }
     // handwriting / pictures / exact PDF words: words with positions; the page counts when every search word is found
     for (const [kind, key] of [['pdf', 'pw'], ['ink', 'i'], ['img', 'm']]) {
-      const words = pg[key] || []; if (!words.length) continue;
-      const nw = words.map((w) => norm(w[0]));
+      let words = pg[key] || []; if (!words.length) continue;
+      let nw = words.map((w) => norm(w[0]));
+      if (kind !== 'pdf') {                                  // a word split in two by the reader ("bud get") still matches when joined
+        const jw = [], jn = [];
+        for (let k = 0; k + 1 < words.length; k++) { const a = words[k], b = words[k + 1]; if (Math.abs(a[2] - b[2]) < Math.max(a[4], b[4]) && b[1] - (a[1] + a[3]) < Math.max(a[4], b[4]) * 1.2) { const x = Math.min(a[1], b[1]), y = Math.min(a[2], b[2]); jw.push([a[0] + b[0], x, y, Math.max(a[1] + a[3], b[1] + b[3]) - x, Math.max(a[2] + a[4], b[2] + b[4]) - y]); jn.push(norm(a[0] + b[0])); } }
+        words = words.concat(jw); nw = nw.concat(jn);
+      }
       const found = ts.map((t) => nw.reduce((a, w, i) => ((kind === 'pdf' ? w.includes(t) : wordHit(w, t)) ? (a.push(i), a) : a), []));
       if (found.some((f) => !f.length)) continue;
       const seen = new Set();
@@ -48,7 +67,12 @@ export function searchEntry(entry, q) {
       }));
     }
   });
-  return hits;
+  return dedupe(hits);
+}
+function dedupe(hits) {
+  const out = [];
+  for (const h of hits) { if (out.some((o) => o.pi === h.pi && o.kind === h.kind && Math.min(o.x + o.w, h.x + h.w) - Math.max(o.x, h.x) > Math.min(o.w, h.w) * 0.5 && Math.min(o.y + o.h, h.y + h.h) - Math.max(o.y, h.y) > Math.min(o.h, h.h) * 0.5)) continue; out.push(h); }
+  return out;
 }
 
 /* ---------- building an index entry ---------- */
@@ -74,18 +98,32 @@ export function typedOf(pg, rectOf, rowsOf) {
   }
   return out;
 }
-export function renderChunk(strokes, ox, oy, w, h, SCALE) {
-  const c = document.createElement('canvas'); c.width = Math.max(8, Math.ceil(w * SCALE)); c.height = Math.max(8, Math.ceil(h * SCALE));
+export function renderChunk(strokes, ox, oy, w, h, SCALE, opt = {}) {
+  const sh = opt.shear || 0, lwf = opt.lw == null ? 0.9 : opt.lw, minLw = opt.minLw == null ? 2.4 : opt.minLw, extra = Math.abs(sh) * h, xo = sh > 0 ? extra : 0, ymid = oy + h / 2;
+  const c = document.createElement('canvas'); c.width = Math.max(8, Math.ceil((w + extra) * SCALE)); c.height = Math.max(8, Math.ceil(h * SCALE));
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   g.strokeStyle = '#000'; g.lineCap = g.lineJoin = 'round';
+  const X = (x, y) => (x - ox + xo - sh * (y - ymid)) * SCALE, Y = (y) => (y - oy) * SCALE;
   for (const s of strokes) {
-    const p = s.p; g.lineWidth = Math.max(2.4, (s.s || 3) * SCALE * 0.9); g.beginPath();
-    g.moveTo((p[0] - ox) * SCALE, (p[1] - oy) * SCALE);
-    if (p.length <= 3) g.lineTo((p[0] - ox) * SCALE + 0.1, (p[1] - oy) * SCALE);
-    for (let i = 3; i < p.length; i += 3) g.lineTo((p[i] - ox) * SCALE, (p[i + 1] - oy) * SCALE);
+    const p = s.p; g.lineWidth = Math.max(minLw, (s.s || 3) * SCALE * lwf); g.beginPath();
+    g.moveTo(X(p[0], p[1]), Y(p[1]));
+    if (p.length <= 3) g.lineTo(X(p[0], p[1]) + 0.1, Y(p[1]));
+    for (let i = 3; i < p.length; i += 3) g.lineTo(X(p[i], p[i + 1]), Y(p[i + 1]));
     g.stroke();
   }
   return c;
+}
+/** how slanted is this writing? tries shears and picks the one that makes vertical strokes line up best */
+export function estimateShear(strokes) {
+  const pts = []; for (const s of strokes) { const p = s.p; for (let i = 0; i < p.length; i += 3) pts.push(p[i], p[i + 1]); if (p.length >= 6) for (let i = 3; i < p.length; i += 3) { const x0 = p[i - 3], y0 = p[i - 2], x1 = p[i], y1 = p[i + 1], n = Math.min(12, Math.floor(Math.hypot(x1 - x0, y1 - y0) / 2)); for (let k = 1; k < n; k++) pts.push(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n); } }
+  if (pts.length < 40) return 0;
+  let best = 0, bs = -1, base = -1;
+  for (let sh = -0.5; sh <= 0.8; sh += 0.05) {
+    const hist = new Map(); for (let i = 0; i < pts.length; i += 2) { const k = Math.round((pts[i] - sh * pts[i + 1]) / 2); hist.set(k, (hist.get(k) || 0) + 1); }
+    let sc = 0; for (const v of hist.values()) sc += v * v;
+    if (Math.abs(sh) < 1e-6) base = sc; if (sc > bs) { bs = sc; best = sh; }
+  }
+  return bs > base * 1.04 ? Math.round(best * 20) / 20 : 0;      // only deslant when it clearly helps
 }
 /* The engine reads best when letters are about 25-40 px tall; much bigger or smaller and it reads nothing.
    So each page is drawn at a scale chosen from the real size of its strokes. */
@@ -118,7 +156,7 @@ export function segmentBands(st, boxes) {
   }
   return out.map((b) => ({ ...b, strokes: b.ix.map((i) => st[i]), boxes: b.ix.map((i) => boxes[i]) }));
 }
-export async function readBand(band, pace) {
+async function readBlock(band, pace) {
   const pad = 14, x0 = band.x0 - pad, y0 = band.y0 - pad, W = band.x1 - band.x0 + 2 * pad, H = band.y1 - band.y0 + 2 * pad;
   const base = Math.min(pickScale(band.boxes), 2300 / Math.max(W, 1));
   const attempt = async (SC) => {
@@ -141,7 +179,70 @@ export async function readBand(band, pace) {
   words = words.map((w) => [w[0], w[1], w[2], w[3], w[4]]);
   return words;
 }
-async function ocrInk(pg, pace, prevBands, langs) {
+export const TUNE = { mode: 'med', target: 38, lw: 0.45, minLw: 1.4, lineGap: 0.62 };
+const median = (a) => { const v = a.filter((x) => x > 0).sort((p, q) => p - q); return v.length ? v[v.length >> 1] : 0; };
+/** a block of writing -> its lines (each line is read on its own: the engine is far better at one line at a time) */
+export function splitLines(band) {
+  const med = Math.max(8, median(band.boxes.map((b) => b[3] - b[1]).filter((v) => v > 4)) || 30);
+  const big = band.boxes.map((_, i) => i).filter((i) => { const b = band.boxes[i]; return b[3] - b[1] >= med * 0.45 || b[2] - b[0] >= med * 0.9; });
+  const main = big.length ? big : band.boxes.map((_, i) => i);
+  const order = main.sort((a, b) => (band.boxes[a][1] + band.boxes[a][3]) - (band.boxes[b][1] + band.boxes[b][3]));
+  const lines = []; let cur = null;
+  for (const i of order) {
+    const b = band.boxes[i], cy = (b[1] + b[3]) / 2;
+    if (cur && cy - cur.cy <= med * TUNE.lineGap) { cur.ix.push(i); cur.sum += cy; cur.cy = cur.sum / cur.ix.length; }
+    else { cur = { ix: [i], sum: cy, cy }; lines.push(cur); }
+  }
+  if (big.length) {                                 // dots, accents and other small marks go with the nearest line
+    const inMain = new Set(main);
+    band.boxes.forEach((b, i) => {
+      if (inMain.has(i)) return;
+      const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; let bl = null, bd = 1e9;
+      for (const l of lines) { const bs = l.ix.map((j) => band.boxes[j]), y0 = Math.min(...bs.map((q) => q[1])), y1 = Math.max(...bs.map((q) => q[3])), x0 = Math.min(...bs.map((q) => q[0])), x1 = Math.max(...bs.map((q) => q[2]));
+        const dy = cy < y0 ? y0 - cy : cy > y1 ? cy - y1 : 0, dx = cx < x0 ? x0 - cx : cx > x1 ? cx - x1 : 0, d = Math.hypot(dx, dy * 1.2); if (d < bd) { bd = d; bl = l; } }
+      if (bl) bl.ix.push(i);
+    });
+  }
+  return lines.map((l) => {
+    const boxes = l.ix.map((i) => band.boxes[i]), strokes = l.ix.map((i) => band.strokes[i]);
+    return { strokes, boxes, x0: Math.min(...boxes.map((b) => b[0])), x1: Math.max(...boxes.map((b) => b[2])), y0: Math.min(...boxes.map((b) => b[1])), y1: Math.max(...boxes.map((b) => b[3])) };
+  });
+}
+const wscore = (ws) => ws.reduce((a, w) => a + (w.c || 0) * (w[0].replace(/[^\p{L}\p{N}]/gu, '').length), 0);
+const wconf = (ws) => { const n = ws.reduce((a, w) => a + w[0].length, 0); return n ? ws.reduce((a, w) => a + (w.c || 0) * w[0].length, 0) / n : 0; };
+async function readLine(line, pace) {
+  const pad = 12, x0 = line.x0 - pad, y0 = line.y0 - pad, W = line.x1 - line.x0 + 2 * pad, H = line.y1 - line.y0 + 2 * pad;
+  const med = median(line.boxes.map((b) => b[3] - b[1]).filter((v) => v > 4)) || (line.y1 - line.y0) || 30;
+  const lh = Math.max(8, line.y1 - line.y0), ref = TUNE.mode === 'line' ? lh : TUNE.mode === 'mix' ? Math.sqrt(lh * med) : med;
+  const base = Math.min(2.4, Math.max(0.2, TUNE.target / ref), 3000 / Math.max(W, 1));
+  const attempt = async (SC, psm) => {
+    await pace();
+    const res = await ocr.recognize(renderChunk(line.strokes, x0, y0, W, H, SC, { lw: TUNE.lw, minLw: TUNE.minLw }), { psm });
+    return res.map((r) => { const w = [r.t, Math.round(x0 + r.x / SC), Math.round(y0 + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]; w.c = r.c; return w; });
+  };
+  let best = await attempt(base, 7); const all = [best];
+  if (!best.length || wconf(best) < 90) {                         // unsure: other sizes and layout modes. Keep every reading: a search can match any of them.
+    for (const [k, psm] of [[1.35, 7], [0.75, 7], [1, 8], [1.8, 7], [0.55, 7]]) {
+      const alt = await attempt(Math.min(2.4, Math.max(0.2, base * k)), psm); all.push(alt);
+      if (wscore(alt) > wscore(best)) best = alt;
+      if (wconf(best) >= 90) break;
+    }
+  }
+  if (all.length > 1) {
+    const out = best.slice();
+    for (const alt of all) { if (alt === best) continue; for (const w of alt) { if (!out.some((o) => o[0].toLowerCase() === w[0].toLowerCase() && Math.abs(o[1] - w[1]) < o[3] * 0.6 && Math.abs(o[2] - w[2]) < o[4])) out.push(w); } }
+    best = out;
+  }
+  return best.map((w) => [w[0], w[1], w[2], w[3], w[4]]);
+}
+export async function readBand(band, pace) {
+  if (band.strokes.length < 2) return readBlock(band, pace);
+  const words = [];
+  for (const ln of splitLines(band)) words.push(...await readLine(ln, pace));
+  if (!words.length && band.strokes.length >= 3) return readBlock(band, pace);
+  return words;
+}
+export async function ocrInk(pg, pace, prevBands, langs) {
   const st = inkStrokes(pg); if (!st.length) return { words: [], bands: [] };
   const boxes = st.map(strokeBox), bands = segmentBands(st, boxes), out = [], keep = new Map((prevBands || []).map((b) => [b.sg + '@' + b.langs, b]));
   for (const b of bands) {

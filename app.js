@@ -188,7 +188,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.16 (build 1)';
+const APP_VERSION = '3.17 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -4791,16 +4791,31 @@ function ensureFindBar() {
   inp.addEventListener('input', () => { if (S.find) { S.find.q = inp.value; doFind(true); } });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); } else if (e.key === 'Escape') closeFind(); });
   b = h('div', { id: 'findbar', class: 'findbar', hidden: true },
-    icon('search', 18), inp, h('span', { class: 'fcount' }),
+    h('button', { class: 'fgrip', 'aria-label': 'Move the search bar (double-tap to reset)', title: 'Drag to move' }, icon('move', 17)), inp, h('span', { class: 'fcount' }),
     h('button', { class: 'fbtn', 'aria-label': 'Previous match', onclick: () => stepFind(-1) }, icon('chevUp', 18)),
     h('button', { class: 'fbtn', 'aria-label': 'Next match', onclick: () => stepFind(1) }, icon('chevDown', 18)),
     h('button', { class: 'fbtn', 'aria-label': 'Close search', onclick: closeFind }, icon('x', 18)));
-  ($('#main') || document.body).append(b); return b;
+  ($('#main') || document.body).append(b);
+  const grip = b.querySelector('.fgrip');
+  let drag = null;
+  grip.addEventListener('pointerdown', (e) => { const r = b.getBoundingClientRect(), pr = b.offsetParent.getBoundingClientRect(); drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, pr, w: r.width, h: r.height }; grip.setPointerCapture(e.pointerId); b.classList.add('moving'); e.preventDefault(); });
+  grip.addEventListener('pointermove', (e) => { if (!drag) return; const x = clamp(e.clientX - drag.dx - drag.pr.left, 4, drag.pr.width - drag.w - 4), y = clamp(e.clientY - drag.dy - drag.pr.top, 4, drag.pr.height - drag.h - 4); placeFind(x, y); });
+  const up = () => { if (!drag) return; drag = null; b.classList.remove('moving'); const pr = b.offsetParent.getBoundingClientRect(); prefs.set('findPos', { fx: b.offsetLeft / pr.width, fy: b.offsetTop / pr.height }); };
+  grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  grip.addEventListener('dblclick', () => { prefs.set('findPos', null); b.style.cssText = ''; });
+  return b;
+}
+function placeFind(x, y) { const b = $('#findbar'); b.style.left = x + 'px'; b.style.top = y + 'px'; b.style.right = 'auto'; b.style.transform = 'none'; }
+function restoreFindPos() {
+  const b = $('#findbar'), p = prefs.get('findPos', null); if (!b) return;
+  if (!p) { b.style.cssText = ''; return; }
+  const pr = b.offsetParent.getBoundingClientRect(), w = b.offsetWidth || 380, hh = b.offsetHeight || 48;
+  placeFind(clamp(p.fx * pr.width, 4, Math.max(4, pr.width - w - 4)), clamp(p.fy * pr.height, 4, Math.max(4, pr.height - hh - 4)));
 }
 function openFind(q = '') {
   if (!S.doc) return;
   closePop(); closeMenu(); clearSel();
-  const b = ensureFindBar(); b.hidden = false;
+  const b = ensureFindBar(); b.hidden = false; restoreFindPos();
   S.find = { q, hits: [], i: -1 };
   if (!PANE && Indexer.opts && ocrOn()) { const id = S.doc.id; Promise.resolve().then(() => (saveTimer != null ? saveNow() : null)).catch(() => {}).then(() => { if (S.find && S.doc && S.doc.id === id) Indexer.urgent(id); }); }      // save what you just wrote first, so the reader sees it
   const inp = b.querySelector('input'); inp.value = q; setTimeout(() => { inp.focus(); inp.select(); }, 30);
