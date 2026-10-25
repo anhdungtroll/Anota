@@ -188,7 +188,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.19 (build 1)';
+const APP_VERSION = '3.20 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -4649,7 +4649,7 @@ async function pace() {
   for (;;) {
     let low = false; try { const b = navigator.getBattery && await navigator.getBattery(); low = !!b && !b.charging && b.level < 0.2; } catch {}
     // the note you have open is read as soon as you pause; other notes wait for a longer quiet; "read now" does not wait
-    const need = Date.now() < Indexer.urgentUntil ? 0 : (S.doc && Indexer.curId === S.doc.id) ? 1100 : 3500;
+    const need = Date.now() < Indexer.urgentUntil ? 0 : (S.doc && Indexer.curId === S.doc.id) ? 600 : 3500;
     if ((!document.hidden || Date.now() < Indexer.urgentUntil) && !S.act && Date.now() - lastInput > need && !low) return;
     await new Promise((r) => setTimeout(r, document.hidden ? 4000 : low ? 30000 : 350));
   }

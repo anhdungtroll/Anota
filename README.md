@@ -62,6 +62,12 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.20
+- **Single letters.** Letters written one by one (an A-to-Z row, i and j side by side, w and x...) are now read one at a time at the line's height, so case is kept and neighbours are no longer glued together. i and l are told apart by the dot.
+- **Short searches** (one or two letters) only match a whole read word, so searching "a" no longer lights up every word containing an a.
+- **Faster reading**: fewer re-reads of unsure lines, and reading starts 0.6 s after you stop writing (was 1.1 s).
+- Test: letters a–z written separately in two print fonts: 23–26 of 26 found, with 1–4 stray highlights per alphabet (before: ~1 of 26 when letters were spaced out).
+
 ## What's new in 3.19
 - **English-only reading.** Vietnamese reading is removed (the app is smaller and the reader faster). Search still ignores accents and capitals in typed text. Notes are re-read once after updating.
 - **Sharper English matching.** Slanted writing is straightened before it is read; matching is stricter for short words so unrelated words stop matching (0 wrong matches in 8,800 test searches), while still tolerating look-alike letters.

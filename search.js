@@ -23,6 +23,7 @@ function approxSub(t, w, max) {         // smallest edit distance between t and 
 const fullLev = (a, b) => { let prev = Array.from({ length: b.length + 1 }, (_, i) => i); for (let i = 1; i <= a.length; i++) { const cur = [i]; for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; } return prev[b.length]; };
 /** does a read word match a search token */
 const wordHit = (w, t) => {
+  if (t.length <= 2) return w === t;                      // one or two letters: only a whole word counts (not a bit of a longer read word)
   if (w.includes(t)) return true;
   const m = fuzzyMax(t), lw = look(w), lt = look(t);
   if (t.length >= 3 && (lw === lt || (t.length >= 4 && lw.includes(lt)))) return true;
@@ -224,6 +225,18 @@ function mergeReadings(readings) {
   }
   return out.map((w) => (w.alts.length ? [w[0], w[1], w[2], w[3], w[4], w.alts.slice(0, 5)] : [w[0], w[1], w[2], w[3], w[4]]));
 }
+/** split a line into glyph groups: strokes that touch or sit close together (a word, or one isolated letter) */
+export function glyphGroups(line, med) {
+  const idx = line.boxes.map((_, i) => i).sort((p, q) => line.boxes[p][0] - line.boxes[q][0]), thr = Math.max(6, med * (TUNE.gapK || 0.55)), gs = [];
+  let g = null;
+  for (const i of idx) {
+    const b = line.boxes[i];
+    if (g && b[0] <= g.x1 + thr) { g.ix.push(i); g.x1 = Math.max(g.x1, b[2]); g.y0 = Math.min(g.y0, b[1]); g.y1 = Math.max(g.y1, b[3]); }
+    else { g = { ix: [i], x0: b[0], x1: b[2], y0: b[1], y1: b[3] }; gs.push(g); }
+  }
+  return gs.map((g) => ({ ...g, strokes: g.ix.map((i) => line.strokes[i]), boxes: g.ix.map((i) => line.boxes[i]) }));
+}
+const ALNUM = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 async function readLine(line, pace, langs) {
   const pad = 12, x0 = line.x0 - pad, y0 = line.y0 - pad, W = line.x1 - line.x0 + 2 * pad, H = line.y1 - line.y0 + 2 * pad;
   const med = median(line.boxes.map((b) => b[3] - b[1]).filter((v) => v > 4)) || (line.y1 - line.y0) || 30;
@@ -236,14 +249,38 @@ async function readLine(line, pace, langs) {
     const xo = sh > 0 ? sh * H : 0;
     return res.map((r) => { const cy = y0 + (r.y + r.h / 2) / SC, w = [r.t, Math.round(x0 + r.x / SC - xo + sh * (cy - (y0 + H / 2))), Math.round(y0 + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]; w.c = r.c; return w; });
   };
+  const lh0 = Math.max(8, line.y1 - line.y0), groups = glyphGroups(line, med);
+  const isIso = (g) => (g.x1 - g.x0) <= 1.5 * lh0 && g.strokes.length <= 4 && !((g.y1 - g.y0) < 0.28 * lh0 && (g.x1 - g.x0) < 0.35 * lh0 && groups.length > 1);    // not a speck / comma
+  const glyph = async (g) => {                                                       // read one isolated letter on its own, at the line's height so its case is kept
+    const gp = 10, gx0 = g.x0 - gp, gy0 = line.y0 - gp, gw = g.x1 - g.x0 + 2 * gp, gh = line.y1 - line.y0 + 2 * gp, SC = Math.min(2.6, Math.max(0.3, 54 / Math.max(lh0, 10)));
+    const rd = async (psm) => { await pace(); const res = await ocr.recognize(renderChunk(g.strokes, gx0, gy0, gw, gh, SC, { lw: TUNE.lw, minLw: TUNE.minLw }), { psm, wl: ALNUM }); return res.filter((r) => /^[A-Za-z0-9]$/.test(r.t) || r.t.length <= 3).sort((p, q) => q.c - p.c)[0] || null; };
+    let r1 = await rd(10), r2 = r1 && r1.c >= 85 ? null : await rd(8);
+    const pick = [r1, r2].filter(Boolean).sort((p, q) => q.c - p.c)[0]; if (!pick) return null;
+    const alts = []; for (const c of [r1, r2]) if (c && c !== pick && c.t !== pick.t) alts.push(c.t);
+    if (/^[iIl1|!]$/.test(pick.t)) {                                       // a bare vertical stroke: the dot decides between i and l
+      const gh = g.y1 - g.y0, dot = g.boxes.some((b) => (b[3] - b[1]) < gh * 0.3 && (b[2] - b[0]) < gh * 0.45 && b[1] < g.y0 + gh * 0.3), tall = g.boxes.some((b) => (b[3] - b[1]) > gh * 0.5);
+      if (g.strokes.length >= 2 && dot && tall) { pick.t = 'i'; alts.length = 0; } else if (g.strokes.length === 1) { pick.t = 'l'; alts.length = 0; alts.push('1', 'I'); }
+    }
+    const w = [pick.t, Math.round(g.x0), Math.round(g.y0), Math.round(g.x1 - g.x0), Math.round(g.y1 - g.y0)]; if (alts.length) w.push([...new Set(alts)].slice(0, 4)); w.c = pick.c; return w;
+  };
+  const iso = groups.filter(isIso);
+  if (groups.length >= 2 && iso.length >= groups.length * 0.6) {                      // letters written one by one: read each separately
+    const out = [];
+    for (const g of groups) {
+      if (isIso(g)) { const w = await glyph(g); if (w) out.push(w); }
+      else { const sub = { strokes: g.strokes, boxes: g.boxes, x0: g.x0, x1: g.x1, y0: g.y0, y1: g.y1 }; out.push(...await readLine(sub, pace, langs)); }
+    }
+    return out;
+  }
+  if (groups.length === 1 && iso.length === 1 && line.strokes.length <= 4) { const w = await glyph(iso[0]); if (w && w.c >= 60) return [w.slice(0, w.length)]; }   // one letter on its own
   let best = await attempt(base, 7, undefined, useSh && TUNE.deslant === 'primary' ? shear : 0); const all = [best];
   if (useSh && TUNE.deslant === 'extra') { const d = await attempt(base, 7, undefined, shear); all.push(d); if (wscore(d) > wscore(best)) best = d; }
   if (/vie/.test(langs || '') && /eng/.test(langs || '')) { const v = await attempt(base, 7, 'vie'); all.push(v); if (wscore(v) > wscore(best) * 1.05) best = v; }      // a Vietnamese-only second opinion: it keeps the accents
-  if (!best.length || wconf(best) < 90) {                         // unsure: other sizes and layout modes. Keep every reading: a search can match any of them.
-    for (const [k, psm] of [[1.35, 7], [0.75, 7], [1, 8], [1.8, 7], [0.55, 7]]) {
+  if (!best.length || wconf(best) < 80) {                         // unsure: other sizes and layout modes. Keep every reading: a search can match any of them.
+    for (const [k, psm] of [[1.35, 7], [0.75, 7], [1, 8]]) {
       const alt = await attempt(Math.min(2.4, Math.max(0.2, base * k)), psm); all.push(alt);
       if (wscore(alt) > wscore(best)) best = alt;
-      if (wconf(best) >= 90) break;
+      if (wconf(best) >= 80) break;
     }
   }
   return mergeReadings([best, ...all.filter((x) => x !== best)]);

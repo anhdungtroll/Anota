@@ -39,6 +39,7 @@ self.onmessage = async (e) => {
     } else if (m.t === 'rec') {
       const en = await open(m.lang || main), psm = String(m.psm || 3);
       if (psm !== en.psm) { en.api.SetVariable('tessedit_pageseg_mode', psm); en.psm = psm; }
+      const wl = m.wl || ''; if (wl !== en.wl) { en.api.SetVariable('tessedit_char_whitelist', wl); en.wl = wl; }
       M.FS.writeFile('/input', new Uint8Array(m.buf));
       if (en.api.SetImageFile(1, 0) === 1) throw new Error('image not readable');
       en.api.Recognize(null);
