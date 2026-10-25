@@ -8,7 +8,7 @@ export const tokens = (q) => norm(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 /* Handwriting is read imperfectly, so a word matches when it is close: letters that look alike are treated as the same,
    and a search word may match a slip-up inside a longer read word (approximate substring match). */
 const look = (s) => s.replace(/rn/g, 'm').replace(/cl/g, 'd').replace(/vv/g, 'w').replace(/[1|!i]/g, 'l').replace(/0/g, 'o').replace(/5/g, 's').replace(/v/g, 'u').replace(/q/g, 'g').replace(/[nh]/g, 'n').replace(/[ao]/g, 'o').replace(/[ec]/g, 'e');
-const fuzzyMax = (t) => (t.length >= 8 ? 3 : t.length >= 6 ? 2 : t.length >= 4 ? 1 : 0);
+const fuzzyMax = (t) => (t.length >= 9 ? 3 : t.length >= 7 ? 2 : t.length >= 4 ? 1 : 0);
 function approxSub(t, w, max) {         // smallest edit distance between t and any part of w (Sellers)
   const m = t.length; if (!m) return 0;
   let prev = new Array(m + 1); for (let i = 0; i <= m; i++) prev[i] = i;
@@ -179,7 +179,7 @@ async function readBlock(band, pace) {
   words = words.map((w) => [w[0], w[1], w[2], w[3], w[4]]);
   return words;
 }
-export const TUNE = { mode: 'med', target: 38, lw: 0.45, minLw: 1.4, lineGap: 0.62 };
+export const TUNE = { deslant: 'primary', mode: 'med', target: 38, lw: 0.45, minLw: 1.4, lineGap: 0.62 };
 const median = (a) => { const v = a.filter((x) => x > 0).sort((p, q) => p - q); return v.length ? v[v.length >> 1] : 0; };
 /** a block of writing -> its lines (each line is read on its own: the engine is far better at one line at a time) */
 export function splitLines(band) {
@@ -229,12 +229,15 @@ async function readLine(line, pace, langs) {
   const med = median(line.boxes.map((b) => b[3] - b[1]).filter((v) => v > 4)) || (line.y1 - line.y0) || 30;
   const lh = Math.max(8, line.y1 - line.y0), ref = TUNE.mode === 'line' ? lh : TUNE.mode === 'mix' ? Math.sqrt(lh * med) : med;
   const base = Math.min(2.4, Math.max(0.2, TUNE.target / ref), 3000 / Math.max(W, 1));
-  const attempt = async (SC, psm, lang) => {
+  const shear = TUNE.deslant === 'off' ? 0 : estimateShear(line.strokes), useSh = Math.abs(shear) >= 0.08;
+  const attempt = async (SC, psm, lang, sh = 0) => {
     await pace();
-    const res = await ocr.recognize(renderChunk(line.strokes, x0, y0, W, H, SC, { lw: TUNE.lw, minLw: TUNE.minLw }), { psm, lang });
-    return res.map((r) => { const w = [r.t, Math.round(x0 + r.x / SC), Math.round(y0 + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]; w.c = r.c; return w; });
+    const res = await ocr.recognize(renderChunk(line.strokes, x0, y0, W, H, SC, { lw: TUNE.lw, minLw: TUNE.minLw, shear: sh }), { psm, lang });
+    const xo = sh > 0 ? sh * H : 0;
+    return res.map((r) => { const cy = y0 + (r.y + r.h / 2) / SC, w = [r.t, Math.round(x0 + r.x / SC - xo + sh * (cy - (y0 + H / 2))), Math.round(y0 + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]; w.c = r.c; return w; });
   };
-  let best = await attempt(base, 7); const all = [best];
+  let best = await attempt(base, 7, undefined, useSh && TUNE.deslant === 'primary' ? shear : 0); const all = [best];
+  if (useSh && TUNE.deslant === 'extra') { const d = await attempt(base, 7, undefined, shear); all.push(d); if (wscore(d) > wscore(best)) best = d; }
   if (/vie/.test(langs || '') && /eng/.test(langs || '')) { const v = await attempt(base, 7, 'vie'); all.push(v); if (wscore(v) > wscore(best) * 1.05) best = v; }      // a Vietnamese-only second opinion: it keeps the accents
   if (!best.length || wconf(best) < 90) {                         // unsure: other sizes and layout modes. Keep every reading: a search can match any of them.
     for (const [k, psm] of [[1.35, 7], [0.75, 7], [1, 8], [1.8, 7], [0.55, 7]]) {

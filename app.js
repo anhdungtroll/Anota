@@ -188,7 +188,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.18 (build 1)';
+const APP_VERSION = '3.19 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -4339,16 +4339,15 @@ function searchPane(repaint) {
   return [
     seg('Read handwriting and pictures', ocr.ocrSupported() ? 'Makes ink and text inside photos searchable. Runs in the background only while you are not writing. Typed text and PDF text are always searchable.' : 'This browser cannot run the text reader. Typed text and PDF text are still searchable.',
       [['auto', 'Automatic'], ['off', 'Off']], () => prefs.get('ocr', 'auto'), (v) => { prefs.set('ocr', v); if (v !== 'off') Indexer.scanAll(L.metas); }),
-    seg('Languages', 'Reading both takes a little longer per page', [['eng+vie', 'English + Vietnamese'], ['eng', 'English'], ['vie', 'Vietnamese']], ocrLangs, (v) => { prefs.set('ocrLangs', v); ocr.setLangs(v); Indexer.scanAll(L.metas); }),
     st,
     (() => {
       const out = h('small', {}, Indexer.status.err ? 'Last problem: ' + Indexer.status.err : 'Reads a picture of known words and shows what it got, and how long it took.');
       return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Test the reader', out),
         h('div', { class: 'segs mini' }, h('button', { class: 'seg', onclick: async (e) => {
           const btn = e.currentTarget; btn.textContent = 'Testing…'; out.textContent = 'First run downloads the reader (about 9 MB)…';
-          try { ocr.setLangs('eng+vie'); const r = await ocr.selfTest(); out.textContent = `Worked in ${r.ms} ms. It read: “${r.text}”`; Indexer.status.err = ''; }
+          try { const r = await ocr.selfTest(); out.textContent = `Worked in ${r.ms} ms. It read: “${r.text}”`; Indexer.status.err = ''; }
           catch (err) { out.textContent = 'Failed: ' + String(err.message || err); }
-          ocr.setLangs(ocrLangs()); btn.textContent = 'Run test';
+          btn.textContent = 'Run test';
         } }, 'Run test')));
     })(),
     seg('Read this note now', 'Skips the short wait, then searches it', [['go', 'Read now']], () => '', () => { if (S.doc) { Indexer.urgent(S.doc.id); toast('Reading this note…'); } else toast('Open a note first'); }),
@@ -4661,7 +4660,7 @@ async function openPdfFor(id) {
   return pdfjs.getDocument({ data: new Uint8Array(buf.slice ? buf.slice(0) : buf), isEvalSupported: false }).promise;
 }
 const ocrOn = () => prefs.get('ocr', 'auto') !== 'off' && ocr.ocrSupported();
-const ocrLangs = () => prefs.get('ocrLangs', 'eng+vie');
+const ocrLangs = () => 'eng';
 const rowsOf = (it) => textLayout(it).rows.map((r) => [r.parts.map((p) => p.t).join(''), TP + r.y, r.lh]);
 /* a small chip so you can see handwriting being read */
 let chipT = 0, chipLast = '';

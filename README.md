@@ -62,6 +62,11 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.19
+- **English-only reading.** Vietnamese reading is removed (the app is smaller and the reader faster). Search still ignores accents and capitals in typed text. Notes are re-read once after updating.
+- **Sharper English matching.** Slanted writing is straightened before it is read; matching is stricter for short words so unrelated words stop matching (0 wrong matches in 8,800 test searches), while still tolerating look-alike letters.
+- Test results (pen-stroke fonts, sizes 24–70, varied slant and pen width, 76 words and phrases): printed writing found 639 of 642 times; ornate cursive about 65%.
+
 ## What's new in 3.18
 - **Zoom slider** on the right edge (plus/minus buttons too). Settings › Touch › Zoom slider turns it off.
 - **The ••• menu** is two columns and sits right under the top bar, so Gestures and pen is always visible on a tablet.
@@ -93,7 +98,7 @@ Not included yet: audio recording, text search inside notes, handwriting recogni
 - **Backup and restore** (Settings > Backup): one `.anota` file with every note, folder, PDF, picture, recording, the Trash and your settings. Add-to-my-notes (newest edit wins) or Replace-everything restore. Share to Drive from the share sheet. Asks the browser to protect the data from automatic clean-up.
 - **Search inside notes**: the library search now finds typed text, PDF text, handwriting and text inside pictures, with a snippet and the page number; tapping a result opens the note on the match.
 - **Find in note** (menu, or Ctrl+F): highlights every match, next / previous, jumps to the spot. Ignores case and accents (`viet` finds `Việt`).
-- **Handwriting and picture reading** (Settings > Search): on-device Tesseract engine, English + Vietnamese, runs in the background only while you are not writing, off switch included. Engine files live in `vendor/ocr/` (Apache-2.0, see LICENSE).
+- **Handwriting and picture reading** (Settings > Search): on-device Tesseract engine, English, runs in the background only while you are not writing, off switch included. Engine files live in `vendor/ocr/` (Apache-2.0, see LICENSE).
 
 ## What's new in 3.12
 - Settings redesigned: a side menu (Look, Toolbar, S Pen, Drawing, Touch, About) so each page is short; turns into a top strip on narrow screens.
