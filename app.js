@@ -188,7 +188,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.17 (build 1)';
+const APP_VERSION = '3.18 (build 1)';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -776,6 +776,7 @@ function renderBase() {
 function frame() {
   frameQueued = false;
   if (!S.doc || !vw) return;
+  syncZoomBar();
   if (S.viewAnim) stepViewAnim();
   const a = S.act;
   if (a && a.snap) stepSnap(a);
@@ -906,6 +907,36 @@ function updateIndicators() {
   const t = `${i + 1} / ${S.doc.pages.length}`;
   if (pi.textContent !== t) pi.textContent = t;
   S.curPage = i;
+}
+/* ---- zoom slider: a slim control on the right edge (log scale, zooms about the middle of the screen) ---- */
+function zoomRange() { return isInf(S.doc) ? [0.08, 10] : [fitScale() * 0.55, fitScale() * 6]; }
+function ensureZoomBar() {
+  let z = $('#zoombar'); if (z) return z;
+  z = h('div', { id: 'zoombar', class: 'zoombar', hidden: true, role: 'slider', 'aria-label': 'Zoom', tabindex: 0 },
+    h('button', { class: 'zb', 'aria-label': 'Zoom in', onclick: () => zoomStep(1.25) }, icon('plus', 15, 2.4)),
+    h('div', { class: 'zt' }, h('div', { class: 'zk' })),
+    h('button', { class: 'zb', 'aria-label': 'Zoom out', onclick: () => zoomStep(0.8) }, h('span', { class: 'minus' })));
+  $('#stage').append(z);
+  const tr = z.querySelector('.zt');
+  const setFrom = (e) => { const r = tr.getBoundingClientRect(), t = clamp(1 - (e.clientY - r.top) / r.height, 0, 1), [a, b] = zoomRange(), target = a * Math.pow(b / a, t); zoomAt(vw / 2, vh / 2, target / S.view.s); };
+  let on = false;
+  tr.addEventListener('pointerdown', (e) => { on = true; tr.setPointerCapture(e.pointerId); z.classList.add('drag'); setFrom(e); e.preventDefault(); e.stopPropagation(); });
+  tr.addEventListener('pointermove', (e) => { if (on) setFrom(e); });
+  const end = () => { on = false; z.classList.remove('drag'); };
+  tr.addEventListener('pointerup', end); tr.addEventListener('pointercancel', end);
+  z.addEventListener('keydown', (e) => { if (e.key === 'ArrowUp' || e.key === '+') zoomStep(1.12); else if (e.key === 'ArrowDown' || e.key === '-') zoomStep(0.89); });
+  return z;
+}
+function zoomStep(k) { zoomAt(vw / 2, vh / 2, k); }
+let zbLast = 0;
+function syncZoomBar(force) {
+  const want = !!S.doc && prefs.get('zoomBar', true) && !document.body.classList.contains('present') && !document.body.classList.contains('focus');
+  const z = $('#zoombar') || (want ? ensureZoomBar() : null); if (!z) return;
+  z.hidden = !want; if (!want) return;
+  if (!force && zbLast === S.view.s) return; zbLast = S.view.s;
+  const [a, b] = zoomRange(), t = clamp(Math.log(S.view.s / a) / Math.log(b / a), 0, 1);
+  z.querySelector('.zk').style.bottom = `calc(${t * 100}% - ${t * 18}px)`;
+  z.setAttribute('aria-valuenow', Math.round(S.view.s / (isInf(S.doc) ? 1 : fitScale()) * 100));
 }
 let zoomTimer;
 function flashZoom() {
@@ -4378,6 +4409,7 @@ function settingsDialog() {
         return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Hold-still delay', lab), h('div', { class: 'sizerow' }, h('span', { class: 'rl' }, 'Quick'), sl, h('span', { class: 'rl' }, 'Slow')));
       })(),
       row('Hold still to smooth a curve', 'Draw a wobbly line and pause: it becomes a smooth curve', [[true, 'On'], [false, 'Off']], () => S.holdSmooth, (v) => { S.holdSmooth = v; prefs.set('holdSmooth', v); }),
+      row('Zoom slider', 'A slim slider on the right edge to zoom in and out', [[true, 'Show'], [false, 'Hide']], () => prefs.get('zoomBar', true), (v) => { prefs.set('zoomBar', v); syncZoomBar(true); }),
       row('Scribble to erase', 'Scratch back and forth over ink to rub it out', [[true, 'On'], [false, 'Off']], () => S.scribble, (v) => { S.scribble = v; prefs.set('scribble', v); }),
       row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); })],
     search: () => searchPane(paint),

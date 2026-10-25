@@ -1,47 +1,48 @@
 // Anota OCR worker: runs the Tesseract engine (tesseract.js-core, Apache-2.0) fully offline.
-// Messages in : {t:'init', base, langs:['eng','vie']}   {t:'rec', id, buf:ArrayBuffer}
+// Messages in : {t:'init', base, langs:['eng','vie'], dataBase?}   {t:'rec', id, buf:ArrayBuffer, psm?, lang?}
 // Messages out: {t:'ready'}  {t:'err', id?, msg}  {t:'res', id, tsv}
-let M = null, api = null, langKey = '', curPsm = '3';
+// Several engines can be open at once (e.g. English+Vietnamese, and a Vietnamese-only second opinion).
+let M = null, main = '', dataRoot = '', baseRoot = '';
+const apis = new Map();                 // lang key -> {api, psm}
 const post = (m) => self.postMessage(m);
 const simdOK = () => WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
-async function init(base, langs, dataBase) {
-  dataBase = dataBase || base;
+async function open(key) {
+  if (apis.has(key)) return apis.get(key);
   if (!M) {
     if (!simdOK()) throw new Error('This browser cannot run the text engine (needs WebAssembly SIMD).');
-    importScripts(base + 'tesseract-core-simd-lstm.wasm.js');
+    importScripts(baseRoot + 'tesseract-core-simd-lstm.wasm.js');
     M = await self.TesseractCore({});
   }
-  const key = langs.join('+') + '@' + dataBase;
-  if (api && key === langKey) return;
-  if (api) { try { api.End(); } catch {} api = null; }
   try { M.FS.mkdir('/tessdata'); } catch {}
-  for (const l of langs) {
-    const fn = '/tessdata/' + l + '.traineddata', tag = dataBase + l; let have = false; try { M.FS.stat(fn); have = (M.__tag || {})[l] === tag; } catch {}
+  for (const l of key.split('+')) {
+    const fn = '/tessdata/' + l + '.traineddata'; let have = false; try { M.FS.stat(fn); have = true; } catch {}
     if (!have) {
-      const r = await fetch(dataBase + l + '.traineddata');
+      const r = await fetch(dataRoot + l + '.traineddata');
       if (!r.ok) throw new Error('Could not load language data: ' + l);
-      M.FS.writeFile(fn, new Uint8Array(await r.arrayBuffer())); (M.__tag ||= {})[l] = tag;
+      M.FS.writeFile(fn, new Uint8Array(await r.arrayBuffer()));
     }
   }
-  api = new M.TessBaseAPI();
-  const st = api.Init('/tessdata', langs.join('+'), 1, '');        // 1 = LSTM only
-  if (st === -1) throw new Error('Text engine could not start');
-  api.SetVariable('tessedit_pageseg_mode', '3');         // fully automatic page layout
+  const api = new M.TessBaseAPI();
+  if (api.Init('/tessdata', key, 1, '') === -1) throw new Error('Text engine could not start');        // 1 = LSTM only
+  api.SetVariable('tessedit_pageseg_mode', '3');
   api.SetVariable('user_defined_dpi', '150');
   api.SetVariable('preserve_interword_spaces', '1');
-  langKey = key; curPsm = '3';
+  const e = { api, psm: '3' }; apis.set(key, e); return e;
 }
 self.onmessage = async (e) => {
   const m = e.data;
   try {
-    if (m.t === 'init') { await init(m.base, m.langs, m.dataBase); post({ t: 'ready' }); }
-    else if (m.t === 'rec') {
-      if (!api) throw new Error('not ready');
-      const psm = String(m.psm || 3); if (psm !== curPsm) { api.SetVariable('tessedit_pageseg_mode', psm); curPsm = psm; }
+    if (m.t === 'init') {
+      baseRoot = m.base; dataRoot = m.dataBase || m.base; const key = m.langs.join('+');
+      if (key !== main) { for (const v of apis.values()) { try { v.api.End(); } catch {} } apis.clear(); main = key; }
+      await open(main); post({ t: 'ready' });
+    } else if (m.t === 'rec') {
+      const en = await open(m.lang || main), psm = String(m.psm || 3);
+      if (psm !== en.psm) { en.api.SetVariable('tessedit_pageseg_mode', psm); en.psm = psm; }
       M.FS.writeFile('/input', new Uint8Array(m.buf));
-      if (api.SetImageFile(1, 0) === 1) throw new Error('image not readable');
-      api.Recognize(null);
-      post({ t: 'res', id: m.id, tsv: api.GetTSVText() });
-    } else if (m.t === 'end') { try { api && api.End(); } catch {} api = null; M = null; langKey = ''; self.close(); }
+      if (en.api.SetImageFile(1, 0) === 1) throw new Error('image not readable');
+      en.api.Recognize(null);
+      post({ t: 'res', id: m.id, tsv: en.api.GetTSVText() });
+    } else if (m.t === 'end') { for (const v of apis.values()) { try { v.api.End(); } catch {} } apis.clear(); M = null; self.close(); }
   } catch (err) { post({ t: 'err', id: m.id, msg: String(err && err.message || err) }); }
 };

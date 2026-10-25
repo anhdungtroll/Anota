@@ -52,7 +52,7 @@ export async function recognize(src, opt = {}) {
   const blob = src instanceof Blob ? src : await new Promise((r) => src.toBlob(r, 'image/png'));
   const buf = await blob.arrayBuffer();
   const id = ++seq;
-  const tsv = await new Promise((res, rej) => { pending.set(id, { res, rej }); worker.postMessage({ t: 'rec', id, buf, psm: opt.psm || 3 }, [buf]); });
+  const tsv = await new Promise((res, rej) => { pending.set(id, { res, rej }); worker.postMessage({ t: 'rec', id, buf, psm: opt.psm || 3, lang: opt.lang || '' }, [buf]); });
   bump();
   return parseTsv(tsv);
 }

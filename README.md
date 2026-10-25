@@ -62,6 +62,11 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.18
+- **Zoom slider** on the right edge (plus/minus buttons too). Settings › Touch › Zoom slider turns it off.
+- **The ••• menu** is two columns and sits right under the top bar, so Gestures and pen is always visible on a tablet.
+- **Handwriting reading**: every line also gets a Vietnamese-only second reading; the most confident text is shown (accents kept when found) and the other readings stay searchable. Notes are re-read once after updating.
+
 ## What's new in 3.17
 - **Find bar** now sits under the top bar on the right (no longer over the note name). Drag the grip on its left to move it anywhere; it remembers the spot. Double-tap the grip to put it back.
 - **Handwriting reading rebuilt for accuracy.** Each line is read on its own (the engine is much better at one line than a whole page); accents, dots and i-dots stay with their line; unsure lines are read again at other sizes and every reading is searchable. Matching tolerates look-alike letters (rn/m, cl/d, i/l/1, o/0…) and words split in two by the reader.

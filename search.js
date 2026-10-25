@@ -51,13 +51,13 @@ export function searchEntry(entry, q) {
     // handwriting / pictures / exact PDF words: words with positions; the page counts when every search word is found
     for (const [kind, key] of [['pdf', 'pw'], ['ink', 'i'], ['img', 'm']]) {
       let words = pg[key] || []; if (!words.length) continue;
-      let nw = words.map((w) => norm(w[0]));
+      let nw = words.map((w) => (w[5] ? [norm(w[0]), ...w[5].map(norm)] : norm(w[0])));
       if (kind !== 'pdf') {                                  // a word split in two by the reader ("bud get") still matches when joined
         const jw = [], jn = [];
         for (let k = 0; k + 1 < words.length; k++) { const a = words[k], b = words[k + 1]; if (Math.abs(a[2] - b[2]) < Math.max(a[4], b[4]) && b[1] - (a[1] + a[3]) < Math.max(a[4], b[4]) * 1.2) { const x = Math.min(a[1], b[1]), y = Math.min(a[2], b[2]); jw.push([a[0] + b[0], x, y, Math.max(a[1] + a[3], b[1] + b[3]) - x, Math.max(a[2] + a[4], b[2] + b[4]) - y]); jn.push(norm(a[0] + b[0])); } }
         words = words.concat(jw); nw = nw.concat(jn);
       }
-      const found = ts.map((t) => nw.reduce((a, w, i) => ((kind === 'pdf' ? w.includes(t) : wordHit(w, t)) ? (a.push(i), a) : a), []));
+      const found = ts.map((t) => nw.reduce((a, w, i) => ((kind === 'pdf' ? w.includes(t) : [].concat(w).some((x) => wordHit(x, t))) ? (a.push(i), a) : a), []));
       if (found.some((f) => !f.length)) continue;
       const seen = new Set();
       found.forEach((idxs) => idxs.forEach((i) => {
@@ -210,17 +210,32 @@ export function splitLines(band) {
 }
 const wscore = (ws) => ws.reduce((a, w) => a + (w.c || 0) * (w[0].replace(/[^\p{L}\p{N}]/gu, '').length), 0);
 const wconf = (ws) => { const n = ws.reduce((a, w) => a + w[0].length, 0); return n ? ws.reduce((a, w) => a + (w.c || 0) * w[0].length, 0) / n : 0; };
-async function readLine(line, pace) {
+/** merge several readings of the same line: the most confident text for each spot is shown, the others stay searchable as alternates */
+function mergeReadings(readings) {
+  const out = [];
+  for (const rd of readings) for (const w of rd) {
+    const cx = w[1] + w[3] / 2, cy = w[2] + w[4] / 2;
+    const hit = out.find((o) => cx > o[1] - o[3] * 0.15 && cx < o[1] + o[3] * 1.15 && cy > o[2] - o[4] * 0.3 && cy < o[2] + o[4] * 1.3);
+    if (!hit) { const n = [w[0], w[1], w[2], w[3], w[4]]; n.c = w.c; n.alts = []; out.push(n); continue; }
+    if (w[0] === hit[0]) { hit.c = Math.max(hit.c || 0, w.c || 0); continue; }
+    const accent = (t) => /[^\x00-\x7f]/.test(t);
+    if ((w.c || 0) > (hit.c || 0) + 3 || (accent(w[0]) && !accent(hit[0]) && (w.c || 0) >= (hit.c || 0) - 12)) { if (!hit.alts.includes(hit[0])) hit.alts.push(hit[0]); hit[0] = w[0]; hit[1] = w[1]; hit[2] = w[2]; hit[3] = w[3]; hit[4] = w[4]; hit.c = w.c; }
+    else if (!hit.alts.includes(w[0])) hit.alts.push(w[0]);
+  }
+  return out.map((w) => (w.alts.length ? [w[0], w[1], w[2], w[3], w[4], w.alts.slice(0, 5)] : [w[0], w[1], w[2], w[3], w[4]]));
+}
+async function readLine(line, pace, langs) {
   const pad = 12, x0 = line.x0 - pad, y0 = line.y0 - pad, W = line.x1 - line.x0 + 2 * pad, H = line.y1 - line.y0 + 2 * pad;
   const med = median(line.boxes.map((b) => b[3] - b[1]).filter((v) => v > 4)) || (line.y1 - line.y0) || 30;
   const lh = Math.max(8, line.y1 - line.y0), ref = TUNE.mode === 'line' ? lh : TUNE.mode === 'mix' ? Math.sqrt(lh * med) : med;
   const base = Math.min(2.4, Math.max(0.2, TUNE.target / ref), 3000 / Math.max(W, 1));
-  const attempt = async (SC, psm) => {
+  const attempt = async (SC, psm, lang) => {
     await pace();
-    const res = await ocr.recognize(renderChunk(line.strokes, x0, y0, W, H, SC, { lw: TUNE.lw, minLw: TUNE.minLw }), { psm });
+    const res = await ocr.recognize(renderChunk(line.strokes, x0, y0, W, H, SC, { lw: TUNE.lw, minLw: TUNE.minLw }), { psm, lang });
     return res.map((r) => { const w = [r.t, Math.round(x0 + r.x / SC), Math.round(y0 + r.y / SC), Math.round(r.w / SC), Math.round(r.h / SC)]; w.c = r.c; return w; });
   };
   let best = await attempt(base, 7); const all = [best];
+  if (/vie/.test(langs || '') && /eng/.test(langs || '')) { const v = await attempt(base, 7, 'vie'); all.push(v); if (wscore(v) > wscore(best) * 1.05) best = v; }      // a Vietnamese-only second opinion: it keeps the accents
   if (!best.length || wconf(best) < 90) {                         // unsure: other sizes and layout modes. Keep every reading: a search can match any of them.
     for (const [k, psm] of [[1.35, 7], [0.75, 7], [1, 8], [1.8, 7], [0.55, 7]]) {
       const alt = await attempt(Math.min(2.4, Math.max(0.2, base * k)), psm); all.push(alt);
@@ -228,17 +243,12 @@ async function readLine(line, pace) {
       if (wconf(best) >= 90) break;
     }
   }
-  if (all.length > 1) {
-    const out = best.slice();
-    for (const alt of all) { if (alt === best) continue; for (const w of alt) { if (!out.some((o) => o[0].toLowerCase() === w[0].toLowerCase() && Math.abs(o[1] - w[1]) < o[3] * 0.6 && Math.abs(o[2] - w[2]) < o[4])) out.push(w); } }
-    best = out;
-  }
-  return best.map((w) => [w[0], w[1], w[2], w[3], w[4]]);
+  return mergeReadings([best, ...all.filter((x) => x !== best)]);
 }
-export async function readBand(band, pace) {
+export async function readBand(band, pace, langs) {
   if (band.strokes.length < 2) return readBlock(band, pace);
   const words = [];
-  for (const ln of splitLines(band)) words.push(...await readLine(ln, pace));
+  for (const ln of splitLines(band)) words.push(...await readLine(ln, pace, langs));
   if (!words.length && band.strokes.length >= 3) return readBlock(band, pace);
   return words;
 }
@@ -249,7 +259,7 @@ export async function ocrInk(pg, pace, prevBands, langs) {
     const sg = strokeSig(b.strokes), hit = keep.get(sg + '@' + langs);
     if (hit) { out.push(hit); continue; }
     if (b.y1 - b.y0 < 3 && b.x1 - b.x0 < 24) { out.push({ sg, langs, words: [] }); continue; }       // a dot or a speck
-    out.push({ sg, langs, words: await readBand(b, pace) });
+    out.push({ sg, langs, words: await readBand(b, pace, langs) });
   }
   return { words: out.flatMap((b) => b.words), bands: out };
 }
@@ -271,8 +281,8 @@ async function ocrImage(ref, pace) {
 export async function indexDoc(doc, opts) {
   let old = null; try { old = await db.getIdx(doc.id); } catch {}
   const langs = opts.langs || ocr.getLangs();
-  const entry = { id: doc.id, v: 1, langs, updated: doc.updated || 0, pages: [] };
-  const oldPages = (old && old.v === 1) ? old.pages : [];
+  const entry = { id: doc.id, v: 2, langs, updated: doc.updated || 0, pages: [] };
+  const oldPages = (old && old.v === 2) ? old.pages : [];
   const imgCache = new Map(); for (const pg of oldPages) for (const k of Object.keys(pg.ic || {})) imgCache.set(k, pg.ic[k]);
   let pdf = null, pdfTried = false;
   const total = doc.pages.length; let todo = 0;
@@ -358,7 +368,7 @@ export const Indexer = {
     for (const m of metas) {
       if (m.type === 'folder' || m.trashed) continue;
       const e = this.mem.get(m.id);
-      if (!e || e.updated < (m.updated || 0) || e.langs !== this.opts.langs() || (e.pending && this.opts.ocrOn())) this.enqueue(m.id);
+      if (!e || e.v !== 2 || e.updated < (m.updated || 0) || e.langs !== this.opts.langs() || (e.pending && this.opts.ocrOn())) this.enqueue(m.id);
     }
   },
   /** read this note right now: skip the usual wait for you to stop writing */

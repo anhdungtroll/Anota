@@ -731,3 +731,24 @@ label.chk{display:flex;align-items:center;gap:8px;font-weight:600;margin:6px 0 2
 .findbar .fgrip{display:grid;place-items:center;width:30px;height:34px;border-radius:10px;color:var(--muted);touch-action:none;cursor:grab;flex:none}
 .findbar .fgrip:hover{background:var(--panel2)}
 .findbar.moving{box-shadow:0 10px 32px rgba(10,15,40,.35);cursor:grabbing}
+
+/* zoom slider */
+.zoombar{position:absolute;right:8px;top:50%;transform:translateY(-50%);z-index:6;width:34px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;border-radius:18px;background:var(--panel);box-shadow:var(--shadow-sm,0 2px 10px rgba(10,15,40,.18));opacity:.72;transition:opacity .15s;touch-action:none;user-select:none}
+.zoombar:hover,.zoombar.drag,.zoombar:focus-within{opacity:1}
+.zoombar[hidden]{display:none}
+.zoombar .zb{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;color:var(--ink);background:transparent}
+.zoombar .zb:active{background:var(--accent-soft)}
+.zoombar .minus{display:block;width:13px;height:2.4px;border-radius:2px;background:currentColor}
+.zoombar .zt{position:relative;width:34px;height:clamp(110px,26vh,240px);cursor:pointer;touch-action:none}
+.zoombar .zt::before{content:"";position:absolute;left:50%;top:6px;bottom:6px;width:4px;margin-left:-2px;border-radius:2px;background:var(--line,rgba(120,120,140,.35));background:rgba(120,126,150,.35)}
+.zoombar .zk{position:absolute;left:50%;margin-left:-9px;bottom:0;width:18px;height:18px;border-radius:50%;background:var(--accent);box-shadow:0 1px 5px rgba(0,0,0,.3);border:2px solid #fff}
+@media (max-height:520px){.zoombar .zt{height:70px}}
+
+/* the ••• menu: two columns, tucked right under the top bar, always fits */
+#menu.menu{top:calc(var(--tabh) + 44px);max-height:calc(100vh - var(--tabh) - 56px);width:min(460px,calc(100vw - 16px));display:grid;grid-template-columns:1fr 1fr;gap:2px 6px;align-content:start;padding:6px 8px 8px}
+#menu.menu[hidden]{display:none}
+#menu .mhead{grid-column:1/-1;padding:8px 8px 2px}
+#menu .mi{padding:9px 10px;gap:9px;font-size:14px;min-width:0}
+#menu .mi .ico{flex:none}
+#menu .mi .val{font-size:12px}
+@media (max-width:520px){#menu.menu{grid-template-columns:1fr}}
