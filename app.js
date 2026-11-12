@@ -3,8 +3,14 @@ import { db } from './db.js';
 import { buildPdf } from './pdfout.js';
 import * as ocr from './ocr.js';
 import { drawTpl, TPL_W, TPL_H, TEMPLATES, tableTemplate, previewTpl } from './templates.js';
-import { Indexer, searchEntry, typedOf, tokens, norm } from './search.js';
+import { Indexer, searchEntry, typedOf, tokens, norm, ocrInk } from './search.js';
 import { exportAll, inspect, restore } from './backup.js';
+import { nativeDiag } from './ink-native.js';
+import { nbAvail, nbInfo, nbPick, nbWrite, nbRead } from './native-backup.js';
+import * as lk from './lock.js';
+import { shAvail, shPending } from './native-share.js';
+import { wgAvail, wgSet } from './native-widget.js';
+import { syAvail, syNative, syInfo, syPick, syForget, syWrite, syRead } from './sync.js';
 
 let pdfjsP = null;
 // pdf.js is large: load it only when a PDF (or converted Word file) is actually opened
@@ -24,7 +30,6 @@ function h(tag, props, ...kids) {
   for (const [k, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue;
     if (k === 'class') e.className = v;
-    else if (k === 'html') e.innerHTML = v;
     else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
     else if (v === true) e.setAttribute(k, '');
     else e.setAttribute(k, v);
@@ -105,6 +110,12 @@ const IC = {
   target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 3v3M12 18v3M3 12h3M18 12h3',
   bold: 'M7 4h6a4 4 0 0 1 0 8H7zM7 12h7a4 4 0 0 1 0 8H7z',
   drop: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z',
+  lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4M12 15v2',
+  finger: 'M12 11v4c0 2-.5 4-1.5 6M8 12a4 4 0 0 1 8 0c0 3 0 6-1 8M5 12a7 7 0 0 1 14 0c0 2 0 4-.5 6M8.5 20c.7-1.5 1-3 1-5v-3M3 9a10 10 0 0 1 18 0',
+  clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
+  layers: 'M12 3 2 8l10 5 10-5-10-5zM2 13l10 5 10-5M2 17.5l10 5 10-5',
+  play: 'M7 4l13 8-13 8z',
+  pause: 'M8 4v16M16 4v16',
   mic: 'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v3',
   tag: 'M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01',
   pin: 'M12 17v5M9 3h6l-1 7 3 3H7l3-3z',
@@ -188,11 +199,11 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.20 (build 1)';
+const APP_VERSION = '3.29';
 const PANE = new URLSearchParams(location.search).has('pane');
-const STYLES = [['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
-const PRESETS = { midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
-const COLOUR_THEMES = new Set(['midnight', 'paper', 'custom']);
+const STYLES = [['studio', 'Studio'], ['graphite', 'Graphite'], ['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
+const PRESETS = { studio: { bg: '#eef0f4', ac: '#2f6df6' }, graphite: { bg: '#15171c', ac: '#8aa4ff' }, midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
+const COLOUR_THEMES = new Set(['studio', 'graphite', 'midnight', 'paper', 'custom']);
 const themeColours = (n) => (n === 'custom' ? Object.assign({}, CUSTOM_DEF, prefs.get('custom', {})) : PRESETS[n]);
 const CUSTOM_DEF = { bg: '#fdf6e3', ac: '#d9480f' };
 const CUSTOM_VARS = ['--bg', '--panel', '--panel2', '--ink', '--muted', '--accent', '--accent-soft', '--line', '--stage', '--tabbar'];
@@ -200,7 +211,7 @@ const hex2 = (h) => { const n = parseInt((/^#[0-9a-f]{6}$/i.test(h) ? h : '#8888
 const mixc = (a, b, t) => { const A = hex2(a), B = hex2(b); return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join(''); };
 const lumOf = (h) => { const [r, g, b] = hex2(h); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
 function applyStyle(n) {
-  if (!STYLES.some((x) => x[0] === n)) n = 'glass';
+  if (!STYLES.some((x) => x[0] === n)) n = 'studio';
   const root = document.documentElement;
   root.dataset.style = n;
   for (const v of CUSTOM_VARS) root.style.removeProperty(v);
@@ -214,13 +225,14 @@ function applyStyle(n) {
   }
   return n;
 }
-applyStyle(prefs.get('style', 'glass'));
+if (prefs.get('styleV', 0) < 328) { prefs.set('styleV', 328); if (prefs.get('style', 'glass') === 'glass') prefs.set('style', 'studio'); }
+applyStyle(prefs.get('style', 'studio'));
 if (PANE) document.body.classList.add('pane');
 const PW = 800, PH = 1131, GAP = 22, ADD_H = 64;
 const PAPER = { white: '#ffffff', cream: '#fbf5e4', dark: '#1f2333' };
 const PALETTE = ['#1b1b1f', '#e03131', '#f76707', '#f59f00', '#2f9e44', '#1c7ed6', '#7048e8', '#e64980', '#868e96', '#f4f4f6'];
 const HL_PALETTE = ['#ffe066', '#ffa94d', '#8ce99a', '#74c0fc', '#da77f2', '#ff8787'];
-const FOLDER_COLORS = ['#3b5bdb', '#e03131', '#f76707', '#2f9e44', '#7048e8', '#e64980'];
+const FOLDER_COLORS = ['#3b5bdb', '#e03131', '#f76707', '#f59f00', '#2f9e44', '#12b886', '#1098ad', '#7048e8', '#e64980', '#868e96'];
 const FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 const TP = 8; // text padding
 
@@ -258,7 +270,7 @@ function loadTools() {
   return out;
 }
 const S = {
-  tabs: [], tab: null,            // open documents; tab === null means the Home screen
+  unlocked: new Set(), tabs: [], tab: null,            // open documents; tab === null means the Home screen
   doc: null, pdf: null,
   view: { s: 1, x: 0, y: 0 },
   layout: { ys: [], total: 0 },
@@ -281,7 +293,7 @@ const S = {
 };
 
 const cv = $('#cv');
-const ctx = cv.getContext('2d', { alpha: false });
+const ctx = cv.getContext('2d', { alpha: false, desynchronized: true });
 const base = document.createElement('canvas');
 const bctx = base.getContext('2d', { alpha: false });
 let vw = 0, vh = 0, dpr = 1;
@@ -412,6 +424,12 @@ function itemRect(it) {
   if (it.k === 'comment') return [it.x, it.y, it.x + CM(it), it.y + CM(it)];
   return [it.x, it.y, it.x + it.w, it.y + it.w / (it.ar || 1)];
 }
+const bThumbs = new Map();
+function boardThumb(m) {
+  let e = bThumbs.get(m.id);
+  if (!e || e.src !== m.thumb) { e = { src: m.thumb, img: new Image(), ok: false }; e.img.onload = () => { e.ok = true; requestFrame(true); baseDirty = true; }; e.img.src = m.thumb; bThumbs.set(m.id, e); }
+  return e.ok ? e.img : null;
+}
 function loadImg(ref) {
   if (imgCache.has(ref)) return imgCache.get(ref);
   imgCache.set(ref, 'loading');
@@ -494,6 +512,17 @@ function drawItem0(c, it, o) {
     let t = it.title || ''; while (t.length > 3 && c.measureText(t).width > w - 24) t = t.slice(0, -2);
     c.fillText(t === (it.title || '') ? t : t + '…', r[0] + 12, r[3] - 12);
     c.restore();
+  } else if (it.k === 'board') {
+    const w = r[2] - r[0], hh = r[3] - r[1], m = byId(it.doc), dark2 = dark;
+    c.save(); c.shadowColor = 'rgba(0,0,0,.2)'; c.shadowBlur = 10; c.shadowOffsetY = 2; c.fillStyle = dark2 ? '#262b40' : '#ffffff'; roundRect(c, r[0], r[1], w, hh, 14); c.fill(); c.restore();
+    c.save(); roundRect(c, r[0], r[1], w, hh, 14); c.clip();
+    const th = m && m.thumb ? boardThumb(m) : null, bar = 34;
+    if (th) { const k = Math.max(w / th.width, (hh - bar) / th.height); c.drawImage(th, r[0] + (w - th.width * k) / 2, r[1] + ((hh - bar) - th.height * k) / 2, th.width * k, th.height * k); }
+    else { c.fillStyle = dark2 ? '#1b1e2d' : '#eef0f6'; c.fillRect(r[0], r[1], w, hh - bar); c.fillStyle = dark2 ? '#9298b4' : '#6b7084'; c.font = `600 ${Math.max(12, w / 18)}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(m ? 'Empty whiteboard' : 'Whiteboard not found', r[0] + w / 2, r[1] + (hh - bar) / 2); }
+    c.fillStyle = dark2 ? '#262b40' : '#f6f7fb'; c.fillRect(r[0], r[1] + hh - bar, w, bar);
+    c.fillStyle = dark2 ? '#eceef7' : '#1b1d29'; c.font = `700 ${Math.max(12, Math.min(18, w / 16))}px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.fillText('▦  ' + (m ? m.title : 'Missing').slice(0, 40), r[0] + 12, r[1] + hh - bar / 2 + 1);
+    c.restore(); c.strokeStyle = dark2 ? 'rgba(138,164,255,.5)' : 'rgba(59,91,219,.4)'; c.lineWidth = 1.5; roundRect(c, r[0], r[1], w, hh, 14); c.stroke();
   } else if (it.k === 'audio') {
     const w = r[2] - r[0], hh = r[3] - r[1], A = S.aud && S.aud.it === it ? S.aud : null;
     const dur = it.dur || (A && A.el.duration) || 1, pos = A ? A.el.currentTime : 0, playing = !!A && !A.el.paused;
@@ -581,6 +610,11 @@ function drawStroke(c, st, dark) {
   const kind = st.t === 'pen' ? 'ball' : st.t;
   c.save();
   c.lineCap = 'round'; c.lineJoin = 'round';
+  if (kind === 'hl' && st.tape) {                                      // tape: an opaque strip that hides what is under it; erase it to uncover
+    c.shadowColor = 'rgba(0,0,0,.28)'; c.shadowBlur = 3; c.shadowOffsetY = 1;
+    c.strokeStyle = st.c; c.lineWidth = st.s; c.lineCap = 'butt'; strokePath(c, p, st.sh); c.stroke();
+    c.restore(); return;
+  }
   if (kind === 'hl') {
     c.globalCompositeOperation = dark ? 'source-over' : 'multiply';
     c.globalAlpha = dark ? 0.45 : 0.6;
@@ -599,16 +633,19 @@ function drawStroke(c, st, dark) {
     if (T.grain) c.lineWidth = st.s * 1.15;
     strokePath(c, p, st.sh); c.stroke();
   } else {
-    let mx = p[0], my = p[1];
+    // pressure changes the width a little at a time, so neighbouring pieces with (almost) the same width share one path and one stroke() call
+    let mx = p[0], my = p[1], cw = 0, open = false;
     for (let i = 1; i < n; i++) {
       const x = p[3 * i], y = p[3 * i + 1];
       const nx = i < n - 1 ? (x + p[3 * i + 3]) / 2 : x, ny = i < n - 1 ? (y + p[3 * i + 4]) / 2 : y;
       let k = T.w((p[3 * i + 2] + p[3 * i - 1]) / 2);
       if (T.taper) k *= Math.min(1, 0.3 + 0.7 * i / 5, 0.25 + 0.75 * (n - 1 - i) / 7);
-      c.lineWidth = Math.max(0.2, st.s * k);
-      c.beginPath(); c.moveTo(mx, my); c.quadraticCurveTo(x, y, nx, ny); c.stroke();
+      const w = Math.max(0.2, st.s * k);
+      if (!open || Math.abs(w - cw) > cw * 0.05) { if (open) c.stroke(); c.lineWidth = w; cw = w; c.beginPath(); c.moveTo(mx, my); open = true; }
+      c.quadraticCurveTo(x, y, nx, ny);
       mx = nx; my = ny;
     }
+    if (open) c.stroke();
   }
   c.restore();
 }
@@ -688,17 +725,30 @@ function drawPage(c, pg, o) {
   if (pg.bm && !o.flat && !inf) { c.fillStyle = '#e8590c'; c.beginPath(); c.moveTo(PW - 66, 0); c.lineTo(PW - 30, 0); c.lineTo(PW - 30, 46); c.lineTo(PW - 48, 34); c.lineTo(PW - 66, 46); c.closePath(); c.fill(); }
   if (o.bgOnly) { if (!inf) c.restore(); return; }
   const sel = o.skipSel && S.sel ? S.sel : null;
-  for (const it of pg.items || []) {
-    if (sel && sel.oset.has(it)) continue;
-    if (vis && !hit(itemRect(it), vis)) continue;
-    drawItem(c, it, o);
-  }
-  for (const st of pg.strokes) {
-    if (sel && sel.set.has(st)) continue;
-    if (vis && !hit(bbox(st), vis)) continue;
-    drawStroke(c, st, dark);
-  }
+  const lys = pg.layers && pg.layers.length ? pg.layers : null, base = lys ? lys[0].id : null;
+  const drawLayer = (L) => {
+    const mine = (x) => !lys || (L ? (x.ly || base) === L.id || (x.ly && !lys.some((q) => q.id === x.ly) && L === lys[0]) : true);
+    for (const it of pg.items || []) {
+      if (!mine(it)) continue;
+      if (sel && sel.oset.has(it)) continue;
+      if (vis && !hit(itemRect(it), vis)) continue;
+      drawItem(c, it, o);
+    }
+    for (const st of pg.strokes) {
+      if (!mine(st)) continue;
+      if (sel && sel.set.has(st)) continue;
+      if (vis && !hit(bbox(st), vis)) continue;
+      drawStrokeMaybeDim(c, st, dark);
+    }
+  };
+  if (lys) { for (const L of lys) if (L.v !== false) drawLayer(L); } else drawLayer(null);
   if (!inf) c.restore();
+}
+function drawStrokeMaybeDim(c, st, dark) {
+  {
+    if (st.rid && S.aud && S.aud.it.id === st.rid && st.rt / 1000 > S.aud.el.currentTime + 0.2) { c.save(); c.globalAlpha = 0.22; drawStroke(c, st, dark); c.restore(); }
+    else drawStroke(c, st, dark);
+  }
 }
 
 /* =====================================================================
@@ -977,6 +1027,7 @@ function ensurePdf() {
     const top = S.layout.ys[i];
     if (top > wy1 + 400 || top + pg.h < wy0 - 400) return;
     visible.push(pg.pdf);
+    pdfPageLinks(T, pg.pdf);
     // sharp enough for the screen, but never more than ~5 megapixels per page (keeps big PDFs from exhausting memory)
     const want = clamp(Math.round(Math.min(PW * s * dpr * 1.1, Math.sqrt(5e6 * PW / pg.h))), 400, 2400);
     const have = pdfCache.get(pg.pdf);
@@ -1033,7 +1084,11 @@ const arrOf = (pg, o) => (o.p ? pg.strokes : pg.items);
 const pageIndex = (pg) => S.doc.pages.indexOf(pg);
 function ghost(st, pi) { S.ghosts.push({ st, pi, t0: now() }); }
 
+const layerOf = (pg, o) => (pg.layers && pg.layers.length ? pg.layers.find((L) => L.id === o.ly) || pg.layers[0] : null);
+const editL = (pg, o) => { if (!pg.layers || !pg.layers.length) return true; const L = layerOf(pg, o), a = pg.layers.find((x) => x.id === pg.al) || pg.layers[0]; return !!L && L === a && L.v !== false && !L.k; };   // only the active layer is editable
+const liveL = (pg, o) => { const L = layerOf(pg, o); return !L || (L.v !== false && !L.k); };            // not hidden, not locked
 function actAddObjs(pg, objs) {
+  if (pg.layers && pg.al) for (const o of objs) if (!o.ly) o.ly = pg.al;
   for (const o of objs) arrOf(pg, o).push(o);
   commit({
     undo() { for (const o of objs) { const a = arrOf(pg, o), i = a.indexOf(o); if (i >= 0) a.splice(i, 1); } },
@@ -1311,6 +1366,42 @@ function placeSelbar() {
   const ty = (sl.b[1] + sl.dy - 14) * s + y;
   bar.style.top = clamp((ty < 56 ? (sl.b[3] + sl.dy + 14) * s + y + 46 : ty) + off.y, 50, vh - 8) + 'px';
 }
+/* ---- handwriting to typed text ---- */
+async function inkToText(strokes) {
+  const { words } = await ocrInk({ strokes }, async () => {}, null, ocr.getLangs());
+  const ws = words.filter((w) => w && w[0]).map((w) => ({ t: String(w[0]), x: w[1], y: w[2], w: w[3], h: w[4] })); if (!ws.length) return '';
+  const med = ws.map((w) => w.h).sort((a, b) => a - b)[ws.length >> 1] || 20, lines = [];
+  for (const w of ws.sort((a, b) => a.y + a.h / 2 - (b.y + b.h / 2))) {
+    const cy = w.y + w.h / 2, L = lines.find((l) => Math.abs(l.cy - cy) < med * 0.6);
+    if (L) { L.w.push(w); L.cy = L.w.reduce((a, q) => a + q.y + q.h / 2, 0) / L.w.length; } else lines.push({ cy, w: [w] });
+  }
+  return lines.sort((a, b) => a.cy - b.cy).map((l) => l.w.sort((a, b) => a.x - b.x).map((q) => q.t).join(' ')).join('\n');
+}
+async function convertToText() {
+  const sl = S.sel; if (!sl) return;
+  const ink = sl.items.filter((i) => i.o.p && i.o.t !== 'hl' && !i.o.sh);
+  if (!ink.length) return toast('Select some handwriting first');
+  const pg = ink[0].pg, pi = ink[0].pi, strokes = ink.filter((i) => i.pg === pg).map((i) => i.o);
+  toast('Reading your handwriting…', 8000);
+  let text = '';
+  try { text = await inkToText(strokes); } catch (e) { console.warn(e); }
+  if (!text) return toast('Could not read that. Try selecting fewer words at a time.');
+  const bb = strokes.map(bbox).reduce((a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]);
+  const hs = strokes.map((s) => bbox(s)).map((b) => b[3] - b[1]).sort((a, b) => a - b), nl = text.split('\n').length;
+  const size = clamp(Math.round(((bb[3] - bb[1]) / nl) * 0.62), 20, 56), col = strokes[0].c || '#000000';
+  const ta = h('textarea', { rows: 5, style: 'width:100%;font:inherit;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)' }); ta.value = text;
+  const place = (replace) => {
+    const t = ta.value.trim(); if (!t) return;
+    const it = { id: uid(), k: 'text', x: bb[0], y: bb[1], w: Math.max(240, Math.min(PW - bb[0] - 10, bb[2] - bb[0] + 60)), text: t, c: col, s: size };
+    if (!isInf(S.doc)) it.x = clamp(it.x, 10, PW - it.w - 10);
+    if (replace) { S.sel = null; $('#selbar').hidden = true; actRemoveObjs(ink.filter((i) => i.pg === pg).map((i) => ({ pg: i.pg, o: i.o })), false); }
+    else it.y = bb[3] + 14;
+    afterInsert(pg, pi, it);
+  };
+  modal({ title: 'Typed text', body: [h('p', { class: 'note' }, 'Check it and fix any mistakes. Handwriting reading is best with clear, separate letters.'), ta],
+    actions: [{ label: 'Cancel' }, { label: 'Copy', fn: () => { navigator.clipboard && navigator.clipboard.writeText(ta.value).then(() => toast('Copied')); return false; } },
+      { label: 'Add below', fn: () => place(false) }, { label: 'Replace ink', kind: 'primary', fn: () => place(true) }] });
+}
 function renderSelbar() {
   const bar = $('#selbar'); bar.innerHTML = '';
   const sl = S.sel; if (!sl) return;
@@ -1330,6 +1421,8 @@ function renderSelbar() {
   B('Copy', 'copy', () => copySel());
   B('Save image', 'down', saveSelImage);
   B('Rotate', 'rotate', () => rotateSel(Math.PI / 2));
+  if (sl.items.some((i) => i.o.p && i.o.t !== 'hl' && !i.o.sh)) B('To text', 'text', convertToText);
+  if (S.cardDraft) { B('Finish card', 'check', finishCard, 'primary'); B('Cancel card', 'trash', () => { S.cardDraft = null; renderSelbar(); }); } else B('Flashcard', 'bookmark', startCard);
   if (sl.items.some((i) => i.o.k === 'text')) B('Copy text', 'text', copySelText);
   if (sl.items.every((i) => i.o.p || i.o.k === 'text')) B('To Elements', 'bookmark', saveElement);
   B('Colour', 'palette', openColourPop);
@@ -1380,6 +1473,7 @@ function openColourPop() {
     closePop();
   };
   PALETTE.forEach((c) => row.append(h('button', { class: 'sw', style: `background:${c}`, 'aria-label': c, onclick: () => apply(c) })));
+  row.append(h('button', { class: 'sw eye', type: 'button', 'aria-label': 'Pick a colour from the page', title: 'Eyedropper', onclick: () => { const keep = S.sel; eyedrop((c) => { S.sel = keep; apply(c); }); } }, icon('drop', 16)));
   pop.append(row);
 }
 function textHot(o, wx, wy, pi) {
@@ -1420,6 +1514,7 @@ function activateItem(hh, wx, wy) {
   if (o.k === 'audio') { buzz(8); tapAudio(hh, wx); return true; }
   if (o.k === 'link') { buzz(10); openLink(o.url); return true; }
   if (o.k === 'jump') { buzz(10); goTarget(o.target); return true; }
+  if (o.k === 'board') { buzz(10); if (byId(o.doc)) openDoc(o.doc); else toast('That whiteboard no longer exists'); return true; }
   if (o.k === 'comment') { openComment(hh, false); return true; }
   return false;
 }
@@ -1454,7 +1549,7 @@ function playVideo(it, pg, pi) {
   if (v.kind === 'file') {
     media = h('video', { src: v.embed, controls: true, autoplay: true, playsinline: true });
     media.addEventListener('error', () => { toast('This link could not be played. Opening it in the browser.'); openLink(it.url); stopVideo(); });
-  } else media = h('iframe', { src: v.embed, allow: 'autoplay; fullscreen; picture-in-picture; encrypted-media', allowfullscreen: true, referrerpolicy: 'strict-origin-when-cross-origin', title: it.title || 'Video' });
+  } else media = h('iframe', { src: v.embed, allow: 'autoplay; fullscreen; picture-in-picture; encrypted-media', allowfullscreen: true, sandbox: 'allow-scripts allow-same-origin allow-presentation allow-popups', referrerpolicy: 'strict-origin-when-cross-origin', title: it.title || 'Video' });
   box.append(media, close); $('#stage').append(box);
   S.video = { it, pg, pi, box }; syncVideo();
 }
@@ -1485,13 +1580,64 @@ async function tapAudio(hh, wx) {
   el.play().catch(() => { if (S.aud === A) stopAudio(); toast('Could not start playback'); });
   baseDirty = true; requestFrame(true);
 }
-async function insertAudio(blob, dur) {
+async function insertAudio(blob, dur, o = {}) {
   try {
     const ref = 'aud:' + uid(); await db.putAsset(ref, blob);
-    const cc = viewCentre(), w = 270, it = { id: uid(), k: 'audio', ref, dur, x: cc.x - w / 2, y: cc.y - 30, w, ar: w / 60 };
+    const cc = o.at || viewCentre(), w = 270, it = { id: o.id || uid(), k: 'audio', ref, dur, x: cc.x - w / 2, y: cc.y - 30, w, ar: w / 60 };
     if (!isInf(S.doc)) it.x = clamp(it.x, 10, PW - w - 10);
+    if (o.at) { actAddObjs(cc.pg, [it]); toast('Saved. Tap your writing to hear what was said at that moment', 3200); return; }
     afterInsert(cc.pg, cc.pi, it); toast('Tap the recording to play it', 2200);
   } catch (e) { console.error(e); toast('Could not save the recording'); }
+}
+/* record while writing: strokes get {rid, rt}; tapping one later plays the audio from that moment */
+function seekEl(el, sec) {
+  const go = () => {
+    if (el.duration === Infinity) {              // MediaRecorder files have no length until the end is probed
+      el.currentTime = 1e101;
+      el.addEventListener('timeupdate', () => { el.currentTime = sec; el.play().catch(() => {}); }, { once: true });
+    } else { el.currentTime = sec; el.play().catch(() => {}); }
+  };
+  if (el.readyState >= 1) go(); else el.addEventListener('loadedmetadata', go, { once: true });
+}
+async function playFrom(it, sec) {
+  if (!(S.aud && S.aud.it === it)) { await tapAudio({ o: it }, null); }
+  const A = S.aud; if (A && A.it === it) seekEl(A.el, Math.max(0, sec));
+  baseDirty = true; requestFrame(true);
+}
+const audioItems = () => (S.doc ? S.doc.pages.flatMap((pg) => (pg.items || []).filter((i) => i.k === 'audio')) : []);
+function ensureRecBar() {
+  let b = $('#recbar'); if (b) return b;
+  b = h('div', { id: 'recbar', class: 'recbar' }, h('span', { class: 'rdot' }), h('span', { class: 'rt' }, '0:00'),
+    h('span', { class: 'rl' }, 'Recording while you write'), h('button', { class: 'btn primary', type: 'button', onclick: () => stopRecWrite() }, 'Stop'));
+  document.body.append(b); return b;
+}
+async function startRecWrite() {
+  if (S.rec) return;
+  if (PANE) return toast('Use the main window to record');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return toast('Recording is not supported on this device');
+  let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { return toast('The microphone is blocked. Allow it in the settings.'); }
+  stopAudio();
+  const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : { audioBitsPerSecond: 32000 }), chunks = [];
+  const at = viewCentre(); at.y = isInf(S.doc) ? at.y : 70; at.x = isInf(S.doc) ? at.x : PW / 2;
+  const R = S.rec = { id: uid(), rec, stream, chunks, mime, at, t0: 0, doc: S.doc, tick: null };
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.start(500); R.t0 = now();
+  const bar = ensureRecBar(); bar.hidden = false;
+  R.tick = setInterval(() => { bar.querySelector('.rt').textContent = fmtT((now() - R.t0) / 1000); }, 250);
+}
+function stopRecWrite() {
+  const R = S.rec; if (!R) return; S.rec = null;
+  clearInterval(R.tick); const bar = $('#recbar'); if (bar) bar.hidden = true;
+  const dur = (now() - R.t0) / 1000;
+  R.rec.onstop = async () => {
+    R.stream.getTracks().forEach((t) => t.stop());
+    const blob = new Blob(R.chunks, { type: R.rec.mimeType || R.mime || 'audio/webm' });
+    if (R.doc !== S.doc) return toast('You switched notes, so the recording was discarded');
+    if (!R.chunks.length || dur < 0.8) return toast('Nothing was recorded');
+    await insertAudio(blob, dur, { id: R.id, at: R.at });
+  };
+  try { R.rec.stop(); } catch { R.stream.getTracks().forEach((t) => t.stop()); }
 }
 function audioDialog() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return toast('Recording is not supported on this device');
@@ -1538,6 +1684,7 @@ function videoPlayHit(wx, wy) {
   return Math.hypot(px - cx, py - cy) < Math.max(Math.min(r[2] - r[0], r[3] - r[1]) * 0.2, 30 / S.view.s) ? hh : null;
 }
 function openLink(u) {
+  u = normalizeUrl(String(u || '')); if (!u) return toast('That link is not allowed');          // only web, mail and phone links ever open
   try { const w = window.open(u, '_blank', 'noopener'); if (!w) location.href = u; } catch { toast('Could not open link'); }
 }
 
@@ -1558,7 +1705,7 @@ function lassoSelect(poly) {
   S.doc.pages.forEach((pg, pi) => {
     const top = S.layout.ys[pi];
     for (const st of pg.strokes) {
-      if (S.lassoOff.has(kindOf(st))) continue;
+      if (S.lassoOff.has(kindOf(st)) || !editL(pg, st)) continue;
       const b = bbox(st);
       if (!hit([b[0], b[1] + top, b[2], b[3] + top], [x0, y0, x1, y1])) continue;
       const p = st.p; let inn = 0, tot = 0;
@@ -1567,7 +1714,7 @@ function lassoSelect(poly) {
       if (tot && inn / tot >= 0.5) items.push({ o: st, pg, pi });
     }
     for (const it of pg.items) {
-      if (S.lassoOff.has(kindOf(it))) continue;
+      if (S.lassoOff.has(kindOf(it)) || !editL(pg, it)) continue;
       const r = itemRect(it);
       if (pointInPoly((r[0] + r[2]) / 2, (r[1] + r[3]) / 2 + top, poly)) items.push({ o: it, pg, pi });
     }
@@ -1579,7 +1726,7 @@ function hitItem(wx, wy) {
   for (let pi = S.doc.pages.length - 1; pi >= 0; pi--) {
     const pg = S.doc.pages[pi], top = S.layout.ys[pi];
     for (let k = pg.items.length - 1; k >= 0; k--) {
-      const it = pg.items[k], r = itemRect(it);
+      const it = pg.items[k]; if (!editL(pg, it)) continue; const r = itemRect(it);
       let px = wx, py = wy - top;
       if (it.r && ROT_KINDS.has(it.k)) {     // undo the item's rotation on the point
         const cx = (r[0] + r[2]) / 2, cy = (r[1] + r[3]) / 2, co = Math.cos(-it.r), si = Math.sin(-it.r);
@@ -1601,7 +1748,7 @@ function strokeAt(wx, wy) {
   for (let pi = S.doc.pages.length - 1; pi >= 0; pi--) {
     const pg = S.doc.pages[pi], ly = wy - S.layout.ys[pi];
     for (let k = pg.strokes.length - 1; k >= 0; k--) {
-      const st = pg.strokes[k], p = st.p, rr = r + st.s / 2;
+      const st = pg.strokes[k], p = st.p, rr = r + st.s / 2; if (!editL(pg, st)) continue;
       for (let i = 0; i + 5 < p.length; i += 3) if (segDist2(wx, ly, p[i], p[i + 1], p[i + 3], p[i + 4]) <= rr * rr) return { o: st, pg, pi };
       if (p.length === 3 && (p[0] - wx) ** 2 + (p[1] - ly) ** 2 <= rr * rr) return { o: st, pg, pi };
     }
@@ -1770,6 +1917,10 @@ cv.addEventListener('pointerdown', (e) => {
   { const [vx, vy] = toWorld(sx, sy), vh = videoPlayHit(vx, vy); if (vh && !S.pick) { playVideo(vh.o, vh.pg, vh.pi); return; } }
   if (S.zw && S.zw.pick && e.pointerId < 1000) { S.zw.pick = false; const zb = document.querySelector('#zw .zwctl button:nth-child(5)'); if (zb) zb.classList.remove('on'); const [px, py] = local(e); S.zw.x = clamp(px - S.zw.w * 0.15, 0, vw - S.zw.w); S.zw.y = clamp(py - S.zw.h * 0.4, 40, vh - S.zw.h); requestFrame(); return; }
   if (S.ruler && !S.pick && e.button !== 1) { const [rx, ry] = toWorld(sx, sy); if (rulerDown(e, rx, ry, finger)) return; }
+  if (finger && S.stylusOnly && !S.pick && S.tool !== 'hand') {              // fingers can still reach buttons and selections while the pen draws
+    const [fx, fy] = toWorld(sx, sy);
+    if (S.sel) { const b = S.sel.b, m = 30 / S.view.s; if (fx > b[0] - m && fx < b[2] + m && fy > b[1] - m && fy < b[3] + m) { beginTool('lasso', e, sx, sy); return; } }
+  }
   if (e.button === 1 || S.tool === 'hand' || S.pick || (finger && S.stylusOnly)) { beginPan(e.pointerId, sx, sy, finger); return; }
   let tool = S.tool;
   if (e.pointerType !== 'touch') {
@@ -1810,7 +1961,7 @@ cv.addEventListener('pointermove', (e) => {
     buzz(12); beginTool(t2, e, sx, sy); if (S.act) S.act.btn = true; requestFrame(true); return;
   }
   for (const ev of list) { const [lx, ly] = local(ev); feed(ev, lx, ly); }
-  requestFrame();
+  if (S.act.kind === 'ink' && !frameQueued) frame(); else requestFrame();
 });
 const endPtr = (e, cancelled) => {
   if (barrel.pid === e.pointerId && !ptr.has(e.pointerId)) { barrel.pid = null; barrelRelease(e, cancelled); return; }
@@ -1888,6 +2039,13 @@ function endPan(cancelled) {
     const [wx, wy] = toWorld(p.sx, p.sy), h = hitItem(wx, wy);
     if (S.pick) { pickAt(p.sx, p.sy); return; }
     if (h && activateItem(h, wx, wy)) return;
+    const pl = !h && pdfLinkAt(wx, wy); if (pl) { goPdfLink(pl); return; }
+    if (!h && !isInf(S.doc) && wy > S.layout.endY && wy < S.layout.endY + ADD_H + 40 && Math.abs(wx - PW / 2) < 150) {
+      addPageAt(S.doc.pages.length, blankPageLike(S.doc.pages.length - 1)); scrollToPage(S.doc.pages.length - 1); return;
+    }
+    if (h && !S.sel && S.stylusOnly && p.finger && (h.o.k === 'img' || h.o.k === 'text' || h.o.k === 'audio')) { makeSel([h]); return; }
+    const sk = !h && strokeAt(wx, wy);
+    if (sk && sk.o.rid) { const au = audioItems().find((i) => i.id === sk.o.rid); if (au) { buzz(8); playFrom(au, sk.o.rt / 1000 - 0.6); return; } }
   }
   if (p.finger && now() - p.t < 80 && Math.hypot(p.vx, p.vy) > 0.15) startMomentum(p.vx, p.vy);
 }
@@ -1935,6 +2093,10 @@ function beginTool(tool, e, sx, sy) {
   }
   const pi = inf ? 0 : pageAt(wy);
   const top = S.layout.ys[pi];
+  if ((tool === 'pen' || tool === 'hl' || tool === 'shape') && S.doc.pages[pi] && S.doc.pages[pi].layers) {
+    const pgx = S.doc.pages[pi], act = pgx.layers.find((L) => L.id === pgx.al) || pgx.layers[0];
+    if (act.v === false || act.k) { toast('The layer “' + act.n + '” is ' + (act.v === false ? 'hidden' : 'locked') + '. Pick another layer in ⋯ › Layers.', 3200); return; }
+  }
   const isPen = e.pointerType === 'pen';
   const pressure = isPen ? e.pressure || 0.5 : 0.5;
   const base = { pid: e.pointerId, pt: e.pointerType };
@@ -1942,6 +2104,8 @@ function beginTool(tool, e, sx, sy) {
     const kind = tool === 'hl' ? 'hl' : S.penType, T = S.tools[kind], spec = PEN[kind];
     const vp = !!spec && (!!spec.sim || (isPen && (kind === 'ball' || kind === 'pencil')));
     const st = { t: kind, c: T.c, s: T.s, vp, p: [wx, wy - top, spec && spec.sim && !isPen ? 0.6 : pressure] };
+    if (kind === 'hl' && T.tape) st.tape = 1;
+    if (S.rec) { st.rid = S.rec.id; st.rt = Math.round(now() - S.rec.t0); }
     S.act = { ...base, kind: 'ink', pi, st, last: [wx, wy - top], sim: !!spec && !!spec.sim, pr: 0.6, lt: e.timeStamp, lsx: sx, lsy: sy };
     armHold(S.act);
     if (S.ruler) {
@@ -2018,8 +2182,10 @@ function feed(e, sx, sy) {
   if (a.kind === 'rmove') { S.ruler.x = a.sx + wx - a.ox; S.ruler.y = a.sy + wy - a.oy; return; }
   if (a.kind === 'rrot') {
     let ang = Math.atan2(wy - S.ruler.y, wx - S.ruler.x);
-    const q = Math.PI / 4, n = Math.round(ang / q); if (Math.abs(ang - n * q) < 0.026) ang = n * q;
-    S.ruler.a = ang; return;
+    const q = Math.PI / 12, n = Math.round(ang / q), snapped = Math.abs(ang - n * q) < 0.06;      // 15 degree steps: 0, 30, 45, 60, 90...
+    if (snapped) ang = n * q;
+    if (snapped && a.lastSnap !== n) { buzz(10); a.lastSnap = n; } else if (!snapped) a.lastSnap = null;
+    S.ruler.a = ang; S.ruler.snapped = snapped; return;
   }
   if (a.kind === 'ink') {
     const top = S.layout.ys[a.pi], lx = wx, ly = wy - top;
@@ -2430,6 +2596,7 @@ function wireMinimap() {
 function drawRuler(c, s) {
   const r = S.ruler; if (!r) return;
   const ps = Math.max(1, 1 / s), L = RL.len, H = RL.hw;
+  if (S.act && S.act.kind === 'rrot') { c.save(); c.translate(r.x, r.y); const dg = Math.round(((r.a * 180 / Math.PI) % 180 + 180) % 180); c.fillStyle = r.snapped ? '#2f9e44' : 'rgba(30,30,40,.85)'; c.font = `700 ${16 * ps}px ${FONT}`; c.textAlign = 'center'; const tw = 52 * ps; c.beginPath(); c.roundRect(-tw / 2, -H - 34 * ps, tw, 24 * ps, 8 * ps); c.fill(); c.fillStyle = '#fff'; c.fillText(dg + '°', 0, -H - 16 * ps); c.restore(); }
   c.save(); c.translate(r.x, r.y); c.rotate(r.a);
   c.fillStyle = 'rgba(255,205,70,.26)'; c.strokeStyle = 'rgba(176,120,0,.85)'; c.lineWidth = 1.4 * ps;
   c.beginPath(); c.roundRect(-L / 2, -H, L, H * 2, 8); c.fill(); c.stroke();
@@ -2464,7 +2631,7 @@ function eraseAt(wx, wy) {
     if (!inf && (ly < -r - 30 || ly > pg.h + r + 30)) return;
     for (let k = pg.strokes.length - 1; k >= 0; k--) {
       const st = pg.strokes[k], b = bbox(st), rr = r + st.s / 2;
-      if (mode === 'hl' && st.t !== 'hl') continue;
+      if (mode === 'hl' && st.t !== 'hl') continue; if (!editL(pg, st)) continue;
       if (lx < b[0] - rr || lx > b[2] + rr || ly < b[1] - rr || ly > b[3] + rr) continue;
       const p = st.p; let hitIt = false;
       if (p.length === 3) hitIt = (p[0] - lx) ** 2 + (p[1] - ly) ** 2 <= rr * rr;
@@ -2540,6 +2707,10 @@ function finishAct() {
     if (a.snap && !a.snap.done) { a.st.p = a.snap.finalPts.flatMap((q) => [q[0], q[1], 0.5]); a.snap.done = true; }
     if (a.st.p.length === 3) a.st.p.push(a.st.p[0], a.st.p[1], a.st.p[2]);
     bbCache.delete(a.st);
+    if (S.pdf && a.st.p.length <= 12 && !a.snap) {                      // a quick tap on a PDF link follows it instead of leaving a dot
+      const q = a.st.p, ext = Math.hypot(q[q.length - 3] - q[0], q[q.length - 2] - q[1]), pl = ext < 4 && pdfLinkAt(q[0], q[1] + S.layout.ys[a.pi]);
+      if (pl) { goPdfLink(pl); requestFrame(true); return; }
+    }
     if (S.scribble && !a.snap && scribbleErase(a)) return;
     actAddObjs(S.doc.pages[a.pi], [a.st]);
   } else if (a.kind === 'shape') {
@@ -2613,9 +2784,10 @@ async function saveNow() {
   d.view = { ...S.view, w: vw };
   let old = null;
   try { old = await db.getMeta(d.id); } catch {}
-  const meta = { ...(old || {}), id: d.id, title: d.title, type: d.type, updated: d.updated, created: (old && old.created) || d.created || d.updated, pages: d.pages.length, thumb: S.thumb, parent: old ? old.parent ?? null : null, links: docLinks(d) };
+  const meta = { ...(old || {}), id: d.id, title: d.title, type: d.type, updated: d.updated, created: (old && old.created) || d.created || d.updated, pages: d.pages.length, thumb: S.thumb, parent: old ? old.parent ?? null : null, links: docLinks(d), bms: d.pages.map((p, i) => (p.bm ? i : -1)).filter((i) => i >= 0) };
   try { await db.saveDoc(d, meta); } catch (e) { console.error(e); toast('Could not save. Storage may be full.'); return; }
   try { if (syncBc) syncBc.postMessage({ id: d.id, from: SELF }); } catch {}
+  autoDirty(); syncDirty(); if (L.metas.some((m) => m.widget)) widgetDirty();
   if (!PANE && Indexer.opts) Indexer.enqueue(d.id);
 }
 const docLinks = (d) => {
@@ -2788,28 +2960,46 @@ function folderPath(id) {
 }
 function renderLibrary(animate = false) {
   const f = $('#filters'); f.innerHTML = '';
-  FILTERS.forEach(([k, label]) => f.append(h('button', { class: 'chip' + (L.filter === k ? ' on' : ''), onclick: () => { L.filter = k; if (k === 'trash') L.tag = null; renderLibrary(true); } }, k === 'trash' ? [icon('trash', 14), ' ' + label] : label)));
+  FILTERS.forEach(([k, label]) => f.append(h('button', { class: 'chip' + (k === 'trash' ? ' toolchip' : '') + (L.filter === k ? ' on' : ''), onclick: () => { L.filter = k; if (k === 'trash') L.tag = null; renderLibrary(true); } }, k === 'trash' ? [icon('trash', 14), ' ' + label] : label)));
   if (L.filter !== 'trash') {
     const tags = [...new Set(L.metas.filter((m) => !m.trashed).flatMap((m) => m.tags || []))].sort();
     tags.forEach((t) => f.append(h('button', { class: 'chip tagchip' + (L.tag === t ? ' on' : ''), onclick: () => { L.tag = L.tag === t ? null : t; renderLibrary(true); } }, '#' + t)));
   } else if (L.metas.some((m) => m.trashed)) f.append(h('button', { class: 'chip', onclick: emptyTrash }, 'Empty trash'));
-  f.append(h('button', { class: 'chip', onclick: sortDialog }, [icon('sort', 14), ' ' + SORTS.find((x) => x[0] === L.sort)[1]]),
-    h('button', { class: 'chip', onclick: graphDialog }, [icon('graph', 14), ' Graph']));
+  f.append(h('button', { class: 'chip sortchip', onclick: sortDialog }, [icon('sort', 14), ' ' + SORTS.find((x) => x[0] === L.sort)[1]]),
+    h('button', { class: 'chip toolchip', onclick: graphDialog }, [icon('graph', 14), ' Graph']),
+    L.folder ? h('button', { class: 'chip', onclick: () => { prefs.set('searchScope', prefs.get('searchScope', 'folder') === 'folder' ? 'all' : 'folder'); renderLibrary(true); } }, [icon('search', 14), prefs.get('searchScope', 'folder') === 'folder' ? ' Search: this folder' : ' Search: everywhere']) : null,
+    h('button', { class: 'chip toolchip', onclick: () => { L.sel = L.sel ? null : new Set(); renderLibrary(); } }, [icon('check', 14), ' Select']),
+    h('button', { class: 'chip toolchip', onclick: bookmarksDialog }, [icon('bookmark', 14), ' Bookmarks']),
+    h('button', { class: 'chip toolchip', onclick: studyDialog }, [icon('bookmark', 14), ' Cards']),
+    h('button', { class: 'chip toolchip', onclick: () => reminderDialog(null) }, [icon('clock', 14), ' Reminders']),
+    h('button', { class: 'chip toolchip', onclick: timerDialog }, [icon('clock', 14), ' Timer']));
+
+  { const rail = $('#rail'); rail.innerHTML = '';
+    const rb = (ic, label, fn, on) => rail.append(h('button', { class: 'rb' + (on ? ' on' : ''), type: 'button', 'aria-label': label, title: label, onclick: fn }, icon(ic, 22), h('span', {}, label)));
+    rail.append(h('img', { src: 'icons/icon-192.png', alt: '', class: 'rlogo' }));
+    rb('home', 'Home', () => { L.filter = 'all'; L.tag = null; L.q = ''; $('#search').value = ''; if (L.folder) { L.folder = null; } renderLibrary(true); }, L.filter === 'all' && !L.folder); rail.lastChild.dataset.fid = '';
+    rb('check', 'Select', () => { L.sel = L.sel ? null : new Set(); renderLibrary(); }, !!L.sel);
+    rb('bookmark', 'Saved', bookmarksDialog); rb('todo', 'Cards', studyDialog); rb('clock', 'Remind', () => reminderDialog(null)); rb('clock', 'Timer', timerDialog); rb('graph', 'Graph', graphDialog);
+    rail.append(h('span', { class: 'sp' }));
+    rb('trash', 'Trash', () => { L.filter = L.filter === 'trash' ? 'all' : 'trash'; L.tag = null; renderLibrary(true); }, L.filter === 'trash');
+    rb('settings', 'Settings', settingsDialog);
+  }
 
   // breadcrumbs
   const cr = $('#crumbs'); cr.innerHTML = '';
   const browsing = !L.q && L.filter === 'all' && !L.tag;
   cr.hidden = !(browsing && L.folder);
   if (!cr.hidden) {
-    cr.append(h('button', { class: 'crumb', onclick: () => goFolder(null) }, icon('home', 16), 'Home'));
+    cr.append(h('button', { class: 'crumb', 'data-fid': '', onclick: () => goFolder(null) }, icon('home', 16), 'Home'));
     for (const m of folderPath(L.folder)) {
-      cr.append(h('span', { class: 'sepc' }, '›'), h('button', { class: 'crumb' + (m.id === L.folder ? ' cur' : ''), onclick: () => goFolder(m.id) }, m.title));
+      cr.append(h('span', { class: 'sepc' }, '›'), h('button', { class: 'crumb' + (m.id === L.folder ? ' cur' : ''), 'data-fid': m.id, onclick: () => goFolder(m.id) }, h('i', { class: 'cdot', style: `background:${m.color || FOLDER_COLORS[0]}` }), m.title));
     }
   }
 
   let list;
-  const alive = L.metas.filter((m) => !m.trashed), qq = L.q.replace(/^#/, '');
-  const nq = norm(L.q), hitQ = (m) => norm(m.title).includes(nq) || (m.tags || []).some((t) => t.includes(qq)) || !!(L.idxHits && L.idxHits.has(m.id));
+  const scopeIds = L.q && L.folder && prefs.get('searchScope', 'folder') === 'folder' ? descendants(L.folder) : null;
+  const alive = L.metas.filter((m) => !m.trashed && (!scopeIds || scopeIds.has(m.id))), qq = L.q.replace(/^#/, '');
+  const nq = norm(L.q), hitQ = (m) => norm(m.title).includes(nq) || (m.tags || []).some((t) => t.includes(qq)) || (!m.locked && !!(L.idxHits && L.idxHits.has(m.id)));
   if (L.filter === 'trash') list = L.metas.filter((m) => m.trashed && !(m.parent && byId(m.parent) && byId(m.parent).trashed === m.trashed) && (!L.q || hitQ(m)));
   else if (L.q || L.tag) list = alive.filter((m) => (!L.q || hitQ(m)) && (L.filter === 'all' || m.type === L.filter) && (!L.tag || (!isFolder(m) && (m.tags || []).includes(L.tag))));
   else if (L.filter !== 'all') list = alive.filter((m) => m.type === L.filter);
@@ -2828,30 +3018,57 @@ function renderLibrary(animate = false) {
     const pinB = m.pinned && !inTrash ? h('span', { class: 'pinb', 'aria-label': 'Pinned' }, icon('pin', 14, 2.2)) : null;
     if (isFolder(m)) {
       const kids = L.metas.filter((k) => (k.parent || null) === m.id && (inTrash || !k.trashed)), docs = kids.filter((k) => !isFolder(k)).slice(0, 4);
-      g.append(h('div', { class: 'card', role: 'button', tabindex: 0, style: sty, onclick: () => (inTrash ? cardMenu(m) : goFolder(m.id)) },
+      const fcard = h('div', { class: 'card' + (L.sel && L.sel.has(m.id) ? ' picked' : ''), role: 'button', tabindex: 0, style: sty, 'data-fid': m.id, onclick: () => { if (fcard._swallow) return; if (L.sel) return toggleSel(m); inTrash ? cardMenu(m) : goFolder(m.id); } },
         h('div', { class: 'thumb folder', style: `--fc:${m.color || FOLDER_COLORS[0]}` },
           h('div', { class: 'ftab' }), m.emoji ? h('div', { class: 'femoji' }, m.emoji) : null,
-          h('div', { class: 'fgrid' }, [0, 1, 2, 3].map((k) => (docs[k] && docs[k].thumb ? h('img', { src: docs[k].thumb, alt: '', draggable: false }) : h('span', { class: docs[k] ? 'ph' : '' }))))),
+          h('div', { class: 'fgrid' }, [0, 1, 2, 3].map((k) => (docs[k] && docs[k].thumb && !docs[k].locked ? h('img', { src: docs[k].thumb, alt: '', draggable: false }) : h('span', { class: docs[k] ? 'ph' : '' }))))),
         pinB,
         h('button', { class: 'more', 'aria-label': 'Folder options', onclick: (e) => { e.stopPropagation(); cardMenu(m); } }, icon('more', 20)),
         h('div', { class: 'card-title' }, m.title),
-        h('div', { class: 'card-sub' }, (kids.length === 1 ? '1 item' : `${kids.length} items`) + (inTrash ? ` · ${daysLeft}d left` : ''))));
+        h('div', { class: 'card-sub' }, (kids.length === 1 ? '1 item' : `${kids.length} items`) + (inTrash ? ` · ${daysLeft}d left` : '')),
+        L.sel ? h('span', { class: 'pickmark' }, icon('check', 14, 3)) : null);
+      if (!inTrash && !L.sel) dragToSplit(fcard, () => ({ id: m.id, title: m.title, type: 'folder' }), { delay: 420, noSplit: true });
+      g.append(fcard);
       return;
     }
     const label = { notebook: 'NOTEBOOK', whiteboard: 'BOARD', pdf: 'PDF' }[m.type];
     const inFolder = (L.q || L.filter !== 'all') && m.parent && byId(m.parent);
-    const cardEl = h('div', { class: 'card', role: 'button', tabindex: 0, style: sty, onclick: () => { if (cardEl._swallow) return; if (inTrash) cardMenu(m); else { if (L.q && L.idxHits && L.idxHits.has(m.id)) S.pendingFind = { id: m.id, q: L.q }; openDoc(m.id); } } },
+    const cardEl = h('div', { class: 'card' + (L.sel && L.sel.has(m.id) ? ' picked' : ''), role: 'button', tabindex: 0, style: sty, onclick: () => { if (cardEl._swallow) return; if (L.sel) return toggleSel(m); if (inTrash) cardMenu(m); else { if (!m.locked && L.q && L.idxHits && L.idxHits.has(m.id)) S.pendingFind = { id: m.id, q: L.q }; openDoc(m.id); } } },
       h('div', { class: 'thumb' + (m.type === 'whiteboard' ? ' board' : '') },
-        m.thumb ? h('img', { src: m.thumb, alt: '', draggable: false }) : icon(m.type === 'whiteboard' ? 'board' : m.type === 'pdf' ? 'pdf' : 'book', 40)),
-      h('span', { class: 'badge' }, label), pinB,
+        m.locked ? h('div', { class: 'lockedthumb' }, icon('lock', 40)) : m.thumb ? h('img', { src: m.thumb, alt: '', draggable: false }) : icon(m.type === 'whiteboard' ? 'board' : m.type === 'pdf' ? 'pdf' : 'book', 40)),
+      h('span', { class: 'badge', title: label, 'aria-label': label }, icon(m.type === 'whiteboard' ? 'board' : m.type === 'pdf' ? 'pdf' : 'book', 14, 2.2)), pinB,
       h('button', { class: 'more', 'aria-label': 'Options', onclick: (e) => { e.stopPropagation(); cardMenu(m); } }, icon('more', 20)),
       h('div', { class: 'card-title' }, m.title),
       h('div', { class: 'card-sub' }, (inFolder ? byId(m.parent).title + ' · ' : '') + (inTrash ? `${daysLeft} days left` : `${m.type === 'whiteboard' ? 'Infinite canvas' : m.pages + (m.pages === 1 ? ' page' : ' pages')} · ${fmtDate(L.sort === 'created' ? created(m) : m.updated)}`)),
       !inTrash && (m.tags || []).length ? h('div', { class: 'card-tags' }, m.tags.slice(0, 3).map((t) => '#' + t).join(' ')) : null,
-      L.q && L.idxHits && L.idxHits.has(m.id) ? (() => { const hs = L.idxHits.get(m.id), x = hs[0]; return h('div', { class: 'card-snip' }, icon(x.kind === 'ink' ? 'edit' : x.kind === 'img' ? 'image' : 'text', 14), h('span', {}, (m.type === 'whiteboard' ? '' : 'p.' + (x.pi + 1) + ' · ') + x.t + (hs.length > 1 ? '  +' + (hs.length - 1) : ''))); })() : null);
-    dragToSplit(cardEl, () => ({ id: m.id, title: m.title, type: m.type }), { delay: 480 });
+      !m.locked && L.q && L.idxHits && L.idxHits.has(m.id) ? (() => { const hs = L.idxHits.get(m.id), x = hs[0]; return h('div', { class: 'card-snip' }, icon(x.kind === 'ink' ? 'edit' : x.kind === 'img' ? 'image' : 'text', 14), h('span', {}, (m.type === 'whiteboard' ? '' : 'p.' + (x.pi + 1) + ' · ') + x.t + (hs.length > 1 ? '  +' + (hs.length - 1) : ''))); })() : null);
+    if (L.sel) cardEl.append(h('span', { class: 'pickmark' }, icon('check', 14, 3)));
+    if (!L.sel && !inTrash) dragToSplit(cardEl, () => ({ id: m.id, title: m.title, type: m.type }), { delay: 480 });
     g.append(cardEl);
   });
+  selBar();
+}
+
+function toggleSel(m) { if (!L.sel) L.sel = new Set(); L.sel.has(m.id) ? L.sel.delete(m.id) : L.sel.add(m.id); renderLibrary(); }
+function selBar() {
+  let bar = $('#libsel');
+  if (!L.sel) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = h('div', { id: 'libsel', class: 'libsel' }); $('#library').append(bar); }
+  const items = [...L.sel].map(byId).filter(Boolean), n = items.length;
+  bar.replaceChildren(h('b', {}, n ? n + ' selected' : 'Tap items to select'),
+    h('button', { class: 'btn small', type: 'button', onclick: () => { const all = childrenOf(L.folder).map((x) => x.id); L.sel = new Set(all); renderLibrary(); } }, 'All'),
+    h('button', { class: 'btn small primary', type: 'button', disabled: !n, onclick: () => moveDialog(items) }, icon('folder', 16), 'Move'),
+    h('button', { class: 'btn small danger', type: 'button', disabled: !n, onclick: async () => { if (!(await confirmDlg('Trash ' + n + ' item' + (n > 1 ? 's' : '') + '?', 'They stay in the Trash for ' + TRASH_DAYS + ' days.', 'Move to Trash'))) return; for (const m of items) await trashItem(m); L.sel = null; renderLibrary(); } }, icon('trash', 16)),
+    h('button', { class: 'btn small', type: 'button', onclick: () => { L.sel = null; renderLibrary(); } }, 'Done'));
+}
+async function moveIntoFolder(info, fid) {
+  const m = byId(info.id); if (!m) return;
+  const list = L.sel && L.sel.has(m.id) ? [...L.sel].map(byId).filter(Boolean) : [m];
+  const banned = new Set(); for (const x of list) if (isFolder(x)) for (const id of descendants(x.id)) banned.add(id);
+  if (fid && banned.has(fid)) return toast('A folder can’t go inside itself');
+  const mv = list.filter((x) => (x.parent || null) !== (fid || null)); if (!mv.length) return;
+  for (const x of mv) await setParent(x, fid || null);
+  L.sel = null; await refreshLibrary(); toast('Moved ' + (mv.length > 1 ? mv.length + ' items' : '“' + m.title + '”') + ' to ' + (fid ? byId(fid).title : 'Home'), 2200);
 }
 function goFolder(id, push = true) {
   if (L.folder === id) return;
@@ -2878,20 +3095,29 @@ async function setParent(m, parent) {
   fresh.parent = m.parent;
   await db.saveMeta(fresh);
 }
-function moveDialog(m) {
-  const banned = isFolder(m) ? descendants(m.id) : new Set();
+function moveDialog(input) {
+  const ms = Array.isArray(input) ? input : [input];
+  const banned = new Set(); for (const m of ms) if (isFolder(m)) for (const id of descendants(m.id)) banned.add(id);
   const folders = [];
   const walk = (pid, depth) => {
-    for (const f of L.metas.filter((x) => isFolder(x) && (x.parent || null) === pid && !banned.has(x.id)).sort((a, b) => a.title.localeCompare(b.title))) {
+    for (const f of L.metas.filter((x) => isFolder(x) && !x.trashed && (x.parent || null) === pid && !banned.has(x.id)).sort((a, b) => a.title.localeCompare(b.title))) {
       folders.push({ f, depth }); walk(f.id, depth + 1);
     }
   };
   walk(null, 0);
-  const cur = m.parent || null;
-  const row = (id, label, depth, ic) => h('button', { class: 'mi' + (cur === id ? ' on' : ''), style: `padding-left:${12 + depth * 22}px`, onclick: async () => {
-    close(); await setParent(m, id); await refreshLibrary(); toast(`Moved to ${id ? byId(id).title : 'Home'}`);
-  } }, h('span', { class: 'ico' }, icon(ic, 22)), label, cur === id ? h('span', { class: 'val' }, 'Here') : null);
-  const close = modal({ title: `Move “${m.title}”`, body: h('div', { class: 'movelist' }, row(null, 'Home', 0, 'home'), folders.map(({ f, depth }) => row(f.id, f.title, depth + 1, 'folder'))), actions: [{ label: 'Cancel' }] });
+  const cur = ms.every((m) => (m.parent || null) === (ms[0].parent || null)) ? ms[0].parent || null : undefined;
+  const row = (id, label, depth, ic, col) => h('button', { class: 'mi' + (cur === id ? ' on' : ''), style: `padding-left:${12 + depth * 22}px`, onclick: async () => {
+    close(); for (const m of ms) await setParent(m, id); await refreshLibrary(); L.sel = null; renderLibrary(); toast(`Moved ${ms.length > 1 ? ms.length + ' items' : ''} to ${id ? byId(id).title : 'Home'}`.replace('Moved  ', 'Moved '));
+  } }, h('span', { class: 'ico', style: col ? `color:${col}` : '' }, icon(ic, 22)), label, cur === id ? h('span', { class: 'val' }, 'Here') : null);
+  const close = modal({ title: ms.length > 1 ? `Move ${ms.length} items` : `Move “${ms[0].title}”`, body: h('div', { class: 'movelist' }, row(null, 'Home', 0, 'home'), folders.map(({ f, depth }) => row(f.id, f.title, depth + 1, 'folder', f.color || FOLDER_COLORS[0]))), actions: [{ label: 'Cancel' }, { label: 'New folder…', fn: () => { setTimeout(folderDialog, 50); } }] });
+}
+function folderStyleDialog(m) {
+  let color = m.color || FOLDER_COLORS[0], emoji = m.emoji || '';
+  const row = h('div', { class: 'swatches' }), eRow = h('div', { class: 'emojirow' });
+  const paint = () => { row.innerHTML = ''; FOLDER_COLORS.forEach((c) => row.append(h('button', { type: 'button', class: 'sw' + (c === color ? ' on' : ''), style: `background:${c}`, 'aria-label': c, onclick: () => { color = c; paint(); } })));
+    eRow.innerHTML = ''; ['', '📚', '🎓', '🧪', '💼', '🏠', '✈️', '🎨', '🎵', '💡', '⭐', '❤️', '🔥', '🌱', '🧠', '📅'].forEach((e) => eRow.append(h('button', { type: 'button', class: 'em' + (e === emoji ? ' on' : ''), onclick: () => { emoji = e; paint(); } }, e || '–'))); };
+  paint();
+  modal({ title: 'Folder colour', body: [row, h('div', { class: 'lbl' }, 'Icon'), eRow], actions: [{ label: 'Cancel' }, { label: 'Save', kind: 'primary', fn: async () => { const f = await db.getMeta(m.id); f.color = color; f.emoji = emoji; await db.saveMeta(f); await refreshLibrary(); } }] });
 }
 async function trashItem(m) {
   const t = Date.now(), ids = [...descendants(m.id)];
@@ -2943,6 +3169,557 @@ async function copyDocText(m) {
   if (!t.trim()) return toast('This note has no typed text');
   try { await navigator.clipboard.writeText(t); toast('Text copied'); } catch { toast('Copy is not allowed here'); }
 }
+/* =====================================================================
+   Flashcards (cut a question and an answer out of your notes, then study them)
+   ===================================================================== */
+const cardsAll = async () => (await db.listTpl().catch(() => [])).filter((r) => r.card);
+async function startCard() {
+  const sl = S.sel; if (!sl) return;
+  const snap = selSnapshot(), pi = sl.items[0].pi;
+  const front = await renderSnapPng(snap, true);
+  S.cardDraft = { front, doc: S.doc.id, title: S.doc.title, pg: pi, x: sl.b[0], y: sl.b[1] - S.layout.ys[pi] };
+  clearSel();
+  toast('That is the question. Now select the answer, then tap “Finish card”.', 4200);
+}
+async function finishCard() {
+  const D = S.cardDraft, sl = S.sel; if (!D || !sl) return;
+  const back = await renderSnapPng(selSnapshot(), true), id = 'fc_' + uid(), fr = 'tplimg:' + id + 'f', br = 'tplimg:' + id + 'b';
+  await db.putAsset(fr, D.front); await db.putAsset(br, back);
+  await db.putTpl({ id, card: 1, name: 'Card', created: Date.now(), due: Date.now(), ivl: 0, ease: 2.5, reps: 0, lapses: 0, items: [{ k: 'img', ref: fr }, { k: 'img', ref: br }], src: { doc: D.doc, title: D.title, pg: D.pg, x: D.x, y: D.y } });
+  S.cardDraft = null; clearSel(); toast('Flashcard saved. Study them from Home › Cards.', 3200); syncDirty();
+}
+function nextSchedule(c, grade) {          // grade 0 again, 1 hard, 2 good, 3 easy: a small spaced-repetition rule (days)
+  const n = { ...c };
+  if (grade === 0) { n.ivl = 0; n.lapses = (c.lapses || 0) + 1; n.ease = Math.max(1.3, c.ease - 0.2); n.due = Date.now() + 60000; return n; }
+  n.reps = (c.reps || 0) + 1;
+  if (grade === 1) { n.ivl = Math.max(1, Math.round((c.ivl || 1) * 1.2)); n.ease = Math.max(1.3, c.ease - 0.15); }
+  else if (grade === 2) { n.ivl = c.reps === 0 || !c.ivl ? 1 : c.ivl < 2 ? 3 : Math.round(c.ivl * c.ease); }
+  else { n.ivl = c.reps === 0 || !c.ivl ? 4 : Math.round(Math.max(c.ivl, 2) * c.ease * 1.3); n.ease = c.ease + 0.15; }
+  n.due = Date.now() + n.ivl * DAY; return n;
+}
+const ivlLabel = (c, g) => { const n = nextSchedule(c, g); return g === 0 ? '1 min' : n.ivl + ' d'; };
+async function studyDialog() {
+  const all = await cardsAll();
+  if (!all.length) return modal({ title: 'Flashcards', body: [h('p', { class: 'note' }, 'No cards yet. In a note, select the question with the lasso, tap “Flashcard”, then select the answer and tap “Finish card”.')], actions: [{ label: 'Close' }] });
+  let queue = all.filter((c) => c.due <= Date.now()).sort((a, b) => a.due - b.due), shown = false, urls = [];
+  const ov = h('div', { class: 'lockov studyov', role: 'dialog', 'aria-label': 'Study flashcards' }), done = () => { urls.forEach((u) => URL.revokeObjectURL(u)); ov.remove(); };
+  const img = async (ref) => { const b = await db.getAsset(ref).catch(() => null); if (!b) return null; const u = URL.createObjectURL(b); urls.push(u); return u; };
+  const paint = async () => {
+    ov.innerHTML = '';
+    const left = queue.length;
+    if (!left) { ov.append(h('div', { class: 'lkbox' }, h('div', { class: 'lktitle' }, 'All done for now'), h('p', { class: 'note', style: 'text-align:center' }, all.length + ' card' + (all.length === 1 ? '' : 's') + ' in your deck. Come back when more are due.'), h('button', { class: 'btn primary', onclick: done }, 'Close'))); return; }
+    const c = queue[0], fu = await img(c.items[0].ref), bu = await img(c.items[1].ref);
+    ov.append(h('div', { class: 'studybox' },
+      h('div', { class: 'studytop' }, h('span', {}, left + ' to go'), h('span', { class: 'sp' }), c.src && c.src.doc && byId(c.src.doc) ? h('button', { class: 'btn', onclick: () => { done(); goTarget({ doc: c.src.doc, pg: c.src.pg, x: c.src.x, y: c.src.y }); } }, 'Open note') : null,
+        h('button', { class: 'btn', onclick: async () => { if (await confirmDlg('Delete this card?', '', 'Delete')) { await db.delTpl(c.id, c.items.map((x) => x.ref)); queue.shift(); all.splice(all.findIndex((x) => x.id === c.id), 1); syncDirty(); paint(); } } }, 'Delete'), h('button', { class: 'btn', onclick: done }, 'Close')),
+      h('div', { class: 'studycard' }, fu ? h('img', { src: fu, alt: 'Question' }) : h('p', {}, 'Missing picture'), shown && bu ? h('hr') : null, shown && bu ? h('img', { src: bu, alt: 'Answer' }) : null),
+      shown ? h('div', { class: 'studygr' }, [['Again', 0], ['Hard', 1], ['Good', 2], ['Easy', 3]].map(([l, g]) => h('button', { class: 'btn' + (g === 2 ? ' primary' : ''), onclick: async () => {
+        const n = nextSchedule(c, g); await db.putTpl(n); queue.shift(); if (g === 0) queue.push(n); Object.assign(c, n); shown = false; syncDirty(); paint();
+      } }, h('b', {}, l), h('small', {}, ivlLabel(c, g)))))
+        : h('div', { class: 'studygr' }, h('button', { class: 'btn primary', onclick: () => { shown = true; paint(); } }, 'Show answer'))));
+  };
+  document.body.append(ov); paint();
+}
+
+/* =====================================================================
+   Reminders and timer (notifications from the Android app; in a browser only while Anota is open)
+   ===================================================================== */
+const LN = () => { const C = window.Capacitor; return C && C.isNativePlatform && C.isNativePlatform() && C.nativePromise ? (m, o) => C.nativePromise('LocalNotifications', m, o || {}) : null; };
+const remList = () => prefs.get('reminders', []);
+const remSave = (l) => prefs.set('reminders', l);
+const nid = (s) => { let x = 7; for (const ch of String(s)) x = (x * 31 + ch.charCodeAt(0)) | 0; return Math.abs(x) % 2000000000 + 1; };
+let remTimers = new Map();
+async function ensureNotifyPerm() {
+  const ln = LN();
+  if (ln) { try { const p = await ln('checkPermissions'); if (p.display === 'granted') return true; const r = await ln('requestPermissions'); return r.display === 'granted'; } catch { return false; } }
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  return (await Notification.requestPermission()) === 'granted';
+}
+async function scheduleOne(r) {
+  const ln = LN(), at = new Date(r.at);
+  if (ln) { try { await ln('schedule', { notifications: [{ id: nid(r.id), title: r.title, body: r.body || '', schedule: { at, allowWhileIdle: true }, extra: { noteId: r.noteId || '', rid: r.id } }] }); } catch (e) { console.warn('notify', e); } }
+  clearTimeout(remTimers.get(r.id)); const ms = r.at - Date.now();
+  if (!ln && ms > 0 && ms < 2 ** 31 - 1) remTimers.set(r.id, setTimeout(() => fireWeb(r), ms));
+}
+function fireWeb(r) {
+  try { if ('Notification' in window && Notification.permission === 'granted') new Notification(r.title, { body: r.body || '', icon: 'icons/icon-192.png' }); } catch {}
+  buzz(200); toast('⏰ ' + r.title, 6000); beep();
+}
+async function cancelOne(r) { const ln = LN(); if (ln) { try { await ln('cancel', { notifications: [{ id: nid(r.id) }] }); } catch {} } clearTimeout(remTimers.get(r.id)); }
+function beep() { try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain(); o.connect(g); g.connect(a.destination); o.frequency.value = 880; g.gain.setValueAtTime(0.2, a.currentTime); g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 1.2); o.start(); o.stop(a.currentTime + 1.2); } catch {} }
+function remBoot() {
+  const keep = remList().filter((r) => r.at > Date.now() - DAY); if (keep.length !== remList().length) remSave(keep);
+  keep.forEach((r) => { if (r.at > Date.now()) scheduleOne(r); });
+  const ln = LN();
+  if (ln && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications && window.Capacitor.Plugins.LocalNotifications.addListener) {
+    window.Capacitor.Plugins.LocalNotifications.addListener('localNotificationActionPerformed', (e) => {
+      const x = e && e.notification && e.notification.extra; if (x && x.noteId && byId(x.noteId)) openDoc(x.noteId);
+    });
+  }
+}
+const toLocalInput = (t) => { const d = new Date(t - new Date(t).getTimezoneOffset() * 6e4); return d.toISOString().slice(0, 16); };
+async function reminderDialog(noteId) {
+  const m = noteId ? byId(noteId) : null;
+  const when = h('input', { type: 'datetime-local', value: toLocalInput(Date.now() + 3600e3), style: 'width:100%;font:inherit;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)' });
+  const msg = h('input', { type: 'text', placeholder: 'Reminder text (optional)', maxlength: 120, style: 'width:100%;font:inherit;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);margin-top:8px' });
+  const quick = h('div', { class: 'segs mini', style: 'margin-top:8px' }, [['In 1 h', 3600e3], ['In 3 h', 3 * 3600e3], ['Tomorrow 9am', 0]].map(([l, d]) => h('button', { class: 'seg', type: 'button', onclick: () => { const t = d || (() => { const x = new Date(); x.setDate(x.getDate() + 1); x.setHours(9, 0, 0, 0); return x.getTime() - Date.now(); })(); when.value = toLocalInput(Date.now() + t); } }, l)));
+  const list = remList().filter((r) => r.at > Date.now()).sort((a, b) => a.at - b.at);
+  const rows = list.map((r) => h('div', { class: 'srow' }, h('div', { class: 'slabel' }, r.title, h('small', {}, new Date(r.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) + (r.body ? ' · ' + r.body : ''))),
+    h('div', { class: 'segs mini' }, r.noteId && byId(r.noteId) ? h('button', { class: 'seg', onclick: () => { $('#dlg').close(); openDoc(r.noteId); } }, 'Open') : null, h('button', { class: 'seg', onclick: async () => { await cancelOne(r); remSave(remList().filter((x) => x.id !== r.id)); $('#dlg').close(); reminderDialog(noteId); } }, 'Delete'))));
+  modal({ title: m ? 'Remind me about “' + m.title + '”' : 'Reminders', body: [m ? h('div', {}, when, msg, quick) : h('p', { class: 'note' }, 'Open a note, then ⋯ › Remind me, to set a reminder about it. Or add a plain one:'), !m ? h('div', {}, when, msg, quick) : null,
+    rows.length ? h('div', { class: 'mhead', style: 'margin-top:14px' }, 'Coming up') : null, ...rows],
+    actions: [{ label: 'Close' }, { label: 'Set reminder', kind: 'primary', fn: () => {
+      const at = new Date(when.value).getTime(); if (!isFinite(at) || at < Date.now() + 5000) { toast('Pick a time in the future'); return false; }
+      const r = { id: uid(), at, title: (msg.value.trim() || (m ? m.title : 'Reminder')), body: m ? (msg.value.trim() ? m.title : 'Anota note') : 'Anota', noteId: m ? m.id : '' };
+      remSave([...remList(), r]);
+      ensureNotifyPerm().then((ok) => {
+        scheduleOne(r); toast(ok ? 'Reminder set for ' + new Date(at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Set, but notifications are blocked. Allow them in the phone settings.', 4200);
+      });
+    } }] });
+}
+/* timer */
+let timerT = null;
+function stopTimer(silent) { if (!S.timer) return; clearInterval(timerT); const ln = LN(); if (ln) ln('cancel', { notifications: [{ id: 99999 }] }).catch(() => {}); S.timer = null; const b = $('#timerchip'); if (b) b.remove(); if (!silent) toast('Timer stopped'); }
+function schedTimerNote(T) { const ln = LN(); if (!ln) return; ln('cancel', { notifications: [{ id: 99999 }] }).catch(() => {}); if (!T.paused) ensureNotifyPerm().then(() => ln('schedule', { notifications: [{ id: 99999, title: T.label || 'Timer finished', body: 'Anota', schedule: { at: new Date(T.end), allowWhileIdle: true } }] }).catch(() => {})); }
+function timerLeft(T) { return Math.max(0, Math.round((T.paused ? T.left : T.end - Date.now()) / 1000)); }
+function toggleTimer() {
+  const T = S.timer; if (!T) return;
+  if (T.paused) { T.end = Date.now() + T.left; T.paused = false; } else { T.left = Math.max(0, T.end - Date.now()); T.paused = true; }
+  schedTimerNote(T); paintTimer();
+}
+function paintTimer() {
+  const T = S.timer, chip = $('#timerchip'); if (!T || !chip) return;
+  chip.querySelector('.t').textContent = fmtT(timerLeft(T));
+  chip.classList.toggle('paused', !!T.paused);
+  const p = chip.querySelector('.tp'); p.innerHTML = ''; p.append(icon(T.paused ? 'play' : 'pause', 16, 2.4)); p.setAttribute('aria-label', T.paused ? 'Continue timer' : 'Pause timer');
+}
+function startTimer(sec, label) {
+  stopTimer(true); const T = S.timer = { end: Date.now() + sec * 1000, label, paused: false, left: sec * 1000 };
+  schedTimerNote(T);
+  const pos = prefs.get('timerPos', null);
+  const chip = h('div', { id: 'timerchip', class: 'timerchip', role: 'group', 'aria-label': 'Timer' },
+    h('span', { class: 'tg', title: 'Drag to move' }, icon('grip', 16)),
+    h('button', { class: 'tt', type: 'button', title: 'Change timer', onclick: () => timerDialog() }, h('span', { class: 't' }, '')),
+    h('button', { class: 'tp', type: 'button', onclick: toggleTimer }),
+    h('button', { class: 'tx', type: 'button', 'aria-label': 'Stop timer', title: 'Stop', onclick: () => stopTimer() }, icon('x', 16, 2.4)));
+  const place = (x, y) => { const r = chip.getBoundingClientRect(); x = clamp(x, 4, innerWidth - r.width - 4); y = clamp(y, 4, innerHeight - r.height - 4); chip.style.left = x + 'px'; chip.style.top = y + 'px'; chip.style.right = chip.style.bottom = 'auto'; return [x, y]; };
+  document.body.append(chip);
+  if (pos) place(pos[0], pos[1]);
+  let drag = null;
+  chip.addEventListener('pointerdown', (e) => { if (e.target.closest('button') && !e.target.closest('.tt')) return; const r = chip.getBoundingClientRect(); drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false, id: e.pointerId }; chip.setPointerCapture(e.pointerId); });
+  chip.addEventListener('pointermove', (e) => { if (!drag || e.pointerId !== drag.id) return; if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6) return; drag.moved = true; place(e.clientX - drag.dx, e.clientY - drag.dy); });
+  const up = (e) => { if (!drag) return; const d = drag; drag = null; if (d.moved) { const r = chip.getBoundingClientRect(); prefs.set('timerPos', [Math.round(r.left), Math.round(r.top)]); const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); }; chip.addEventListener('click', stop, { capture: true, once: true }); } };
+  chip.addEventListener('pointerup', up); chip.addEventListener('pointercancel', up);
+  paintTimer();
+  const tick = () => {
+    if (S.timer !== T) return;
+    if (T.paused) return;
+    const left = timerLeft(T); paintTimer();
+    if (!left) { stopTimer(true); buzz(400); beep(); toast('⏱ ' + (label || 'Time is up'), 8000); try { if (!LN() && 'Notification' in window && Notification.permission === 'granted') new Notification(label || 'Timer finished'); } catch {} }
+  };
+  timerT = setInterval(tick, 500);
+}
+function timerDialog() {
+  const mins = h('input', { type: 'number', min: 1, max: 600, value: 25, style: 'width:90px;font:inherit;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)' });
+  const act = S.timer ? h('p', { class: 'note' }, S.timer.paused ? 'Timer is paused.' : 'A timer is running.') : null;
+  modal({ title: 'Timer', body: [act, h('div', { class: 'segs mini' }, [[5, '5 min'], [10, '10 min'], [25, '25 min'], [45, '45 min']].map(([v, l]) => h('button', { class: 'seg', type: 'button', onclick: () => { mins.value = v; } }, l))),
+    h('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:10px' }, mins, h('span', {}, 'minutes'))],
+    actions: [{ label: 'Close' }, S.timer ? { label: 'Stop timer', fn: () => stopTimer() } : null, { label: S.timer ? 'Restart' : 'Start', kind: 'primary', fn: () => { const v = Math.round(+mins.value); if (!(v >= 1 && v <= 600)) { toast('Enter 1 to 600 minutes'); return false; } startTimer(v * 60, 'Timer · ' + v + ' min'); } }].filter(Boolean) });
+}
+
+/* ---- eyedropper: pick a colour from anything on the page (ink, pictures, PDF) ---- */
+function eyedrop(cb) {
+  if (!S.doc) return;
+  closePop();
+  const ov = h('div', { class: 'eyeov' }), lp = h('canvas', { class: 'eyeloupe', width: 120, height: 120 }), lab = h('div', { class: 'eyelab' }, 'Touch the colour you want');
+  ov.append(lp, lab, h('button', { class: 'btn eyecancel', type: 'button', onclick: (e) => { e.stopPropagation(); end(); } }, 'Cancel'));
+  const g = lp.getContext('2d'), rect = () => cv.getBoundingClientRect();
+  let cur = null;
+  const sample = (x, y) => {
+    const r = rect(), k = cv.width / r.width, px = Math.round((x - r.left) * k), py = Math.round((y - r.top) * k);
+    if (px < 0 || py < 0 || px >= cv.width || py >= cv.height) return null;
+    const d = cv.getContext('2d').getImageData(px, py, 1, 1).data; if (d[3] === 0) return null;
+    return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+  };
+  const show = (e) => {
+    const r = rect(), k = cv.width / r.width, px = Math.round((e.clientX - r.left) * k), py = Math.round((e.clientY - r.top) * k);
+    g.imageSmoothingEnabled = false; g.clearRect(0, 0, 120, 120);
+    try { g.drawImage(cv, px - 7, py - 7, 15, 15, 0, 0, 120, 120); } catch {}
+    cur = sample(e.clientX, e.clientY);
+    g.strokeStyle = '#fff'; g.lineWidth = 3; g.strokeRect(52, 52, 16, 16); g.strokeStyle = '#000'; g.lineWidth = 1; g.strokeRect(52, 52, 16, 16);
+    lab.textContent = cur ? cur.toUpperCase() : 'Nothing here';
+    lab.style.background = cur || '#444'; lab.style.color = cur && lumOf(cur) > 150 ? '#000' : '#fff';
+    const lx = clamp(e.clientX - 60, 6, innerWidth - 126), ly = e.clientY > 190 ? e.clientY - 170 : e.clientY + 50;
+    lp.style.cssText = `left:${lx}px;top:${ly}px`; lab.style.cssText += `;left:${lx}px;top:${ly + 126}px`;
+  };
+  const end = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); end(); } };
+  ov.addEventListener('pointerdown', (e) => { if (e.target.closest('.eyecancel')) return; ov.setPointerCapture(e.pointerId); show(e); });
+  ov.addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'mouse') show(e); });
+  ov.addEventListener('pointerup', (e) => { if (e.target.closest('.eyecancel')) return; show(e); const c = cur; end(); if (c) { cb(c); toast('Picked ' + c.toUpperCase(), 1600); } else toast('Nothing to pick there'); });
+  document.addEventListener('keydown', onKey, true); document.body.append(ov);
+}
+
+/* ---- a whiteboard card inside a notebook page: tap it to open the board ---- */
+async function boardDialog() {
+  if (!S.doc || isInf(S.doc)) return toast('Whiteboard cards go into notebook pages');
+  const boards = L.metas.filter((m) => !m.trashed && m.type === 'whiteboard' && !m.locked).sort((a, b) => b.updated - a.updated).slice(0, 12);
+  const put = (id) => { const cc = viewCentre(), w = 440, it = { id: uid(), k: 'board', doc: id, w, ar: 1.6, x: clamp(cc.x - w / 2, 10, PW - w - 10), y: cc.y - 140 }; afterInsert(cc.pg, cc.pi, it); toast('Tap the card to open the whiteboard', 2600); };
+  const close = modal({ title: 'Whiteboard in this page', body: [h('p', { class: 'note' }, 'A card showing a live preview of a whiteboard. Tap it to open the board.'),
+    h('button', { class: 'mi', type: 'button', onclick: async () => {
+      close(); const m0 = byId(S.doc.id), doc = makeDoc({ type: 'whiteboard', title: 'Board · ' + S.doc.title.slice(0, 30), paper: { style: 'dots', color: S.doc.paper.color || 'white' } });
+      await db.saveDoc(doc, { id: doc.id, title: doc.title, type: 'whiteboard', updated: doc.updated, created: doc.created, pages: 1, thumb: null, parent: m0 ? m0.parent ?? null : null });
+      await refreshLibrary(); put(doc.id);
+    } }, h('span', { class: 'ico' }, icon('plus', 20)), 'New whiteboard'),
+    boards.length ? h('div', { class: 'mhead', style: 'margin-top:10px' }, 'Existing whiteboards') : null,
+    ...boards.map((m) => h('button', { class: 'mi', type: 'button', onclick: () => { close(); put(m.id); } }, h('span', { class: 'ico' }, icon('board', 20)), m.title))], actions: [{ label: 'Cancel' }] });
+}
+
+/* ---- extract part of a page into another note ---- */
+function extractStart() {
+  if (!S.doc) return;
+  closePop(); closeMenu();
+  const ov = h('div', { class: 'cropov' }), box = h('div', { class: 'cropbox', hidden: true }), tip = h('div', { class: 'croptip' }, 'Drag a box around the part to extract'),
+    cancel = h('button', { class: 'btn', type: 'button', onclick: (e) => { e.stopPropagation(); end(); } }, 'Cancel');
+  ov.append(box, h('div', { class: 'cropbar' }, tip, cancel));
+  let x0 = 0, y0 = 0, on = false;
+  const end = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); end(); } };
+  const rectOf = (e) => [Math.min(x0, e.clientX), Math.min(y0, e.clientY), Math.max(x0, e.clientX), Math.max(y0, e.clientY)];
+  ov.addEventListener('pointerdown', (e) => { if (e.target.closest('.cropbar')) return; on = true; x0 = e.clientX; y0 = e.clientY; ov.setPointerCapture(e.pointerId); box.hidden = false; box.style.cssText = `left:${x0}px;top:${y0}px;width:0;height:0`; });
+  ov.addEventListener('pointermove', (e) => { if (!on) return; const r = rectOf(e); box.style.cssText = `left:${r[0]}px;top:${r[1]}px;width:${r[2] - r[0]}px;height:${r[3] - r[1]}px`; });
+  ov.addEventListener('pointerup', (e) => {
+    if (!on) return; on = false; const r = rectOf(e); end();
+    if (r[2] - r[0] < 24 || r[3] - r[1] < 24) return toast('That box is too small');
+    const cr = cv.getBoundingClientRect(), a = toWorld(r[0] - cr.left, r[1] - cr.top), b2 = toWorld(r[2] - cr.left, r[3] - cr.top);
+    extractDialog([a[0], a[1], b2[0], b2[1]]);
+  });
+  document.addEventListener('keydown', onKey, true); document.body.append(ov);
+}
+async function extractDialog(wr) {
+  const inf = isInf(S.doc), pi = inf ? 0 : clamp(pageAt((wr[1] + wr[3]) / 2), 0, S.doc.pages.length - 1), top = inf ? 0 : S.layout.ys[pi], pg = S.doc.pages[pi];
+  let x0 = wr[0], y0 = wr[1] - top, x1 = wr[2], y1 = wr[3] - top;
+  if (!inf) { x0 = clamp(x0, 0, PW); x1 = clamp(x1, 0, PW); y0 = clamp(y0, 0, pg.h); y1 = clamp(y1, 0, pg.h); }
+  const cw = x1 - x0, ch = y1 - y0; if (cw < 8 || ch < 8) return toast('Draw the box over a page');
+  let withInk = false, kind = 'notebook';
+  const k = Math.min(4, 2600 / Math.max(cw, ch)), grab = async () => {
+    await preloadImages(pg);
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(cw * k)); c.height = Math.max(1, Math.round(ch * k));
+    const g = c.getContext('2d'); g.scale(k, k); g.translate(-x0, -y0);
+    let bmp = null; if (!inf && pg.pdf != null && S.pdf) bmp = await renderPdfBitmap(S.pdf, pg.pdf, Math.round(PW * k));
+    if (inf) { g.fillStyle = PAPER[S.doc.paper.color] || '#fff'; g.fillRect(x0, y0, cw, ch); }
+    drawPage(g, pg, { pdfBitmap: bmp, vis: [x0, y0, x1, y1], scale: k, flat: true, bgOnly: !withInk && !inf });
+    return new Promise((r) => c.toBlob((b) => (b && b.size > 1.8e6 ? c.toBlob(r, 'image/jpeg', 0.9) : r(b)), 'image/png'));
+  };
+  const place = async (target, doc, meta) => {
+    const blob = await grab(), ref = 'img:' + uid(); await db.putAsset(ref, blob);
+    const ar = cw / ch, isB = doc.type === 'whiteboard';
+    let w = isB ? Math.min(900, cw) : Math.min(PW - 80, cw * 1.1), hh = w / ar; if (!isB && hh > PH - 80) { hh = PH - 80; w = hh * ar; }
+    const it = { id: uid(), k: 'img', ref, ar, w, x: isB ? 0 : (PW - w) / 2, y: isB ? 0 : 40 };
+    if (target === 'new') doc.pages[0].items.push(it);
+    else if (isB) { const pgx = doc.pages[0]; let mx = 0; for (const q of [...pgx.strokes.map(bbox), ...pgx.items.map(itemRect)]) mx = Math.max(mx, q[2]); it.x = mx ? mx + 40 : 0; pgx.items.push(it); }
+    else { const np = newPage(); np.items.push(it); doc.pages.push(np); }
+    doc.updated = Date.now(); meta.updated = doc.updated; meta.pages = doc.pages.length;
+    await db.saveDoc(doc, meta); await refreshLibrary(); return doc;
+  };
+  const newIn = async (type) => {
+    const m0 = byId(S.doc.id), doc = makeDoc({ type, title: 'From ' + S.doc.title.slice(0, 28), paper: { style: type === 'whiteboard' ? 'dots' : 'blank', color: 'white' } });
+    const meta = { id: doc.id, title: doc.title, type, updated: doc.updated, created: doc.created, pages: 1, thumb: null, parent: m0 ? m0.parent ?? null : null };
+    await place('new', doc, meta); return doc;
+  };
+  const done = (doc) => { const c2 = modal({ title: 'Extracted', body: [h('p', {}, 'Saved in “' + doc.title + '”.')], actions: [{ label: 'Stay here' }, { label: 'Open it', kind: 'primary', fn: () => { setTimeout(() => openDoc(doc.id), 60); } }] }); return c2; };
+  const open = S.tabs.map((t) => t.id), others = L.metas.filter((m) => !m.trashed && m.type !== 'folder' && m.type !== 'pdf' && !m.locked && !open.includes(m.id)).sort((a, b) => b.updated - a.updated).slice(0, 10);
+  const opt = (label, hint, opts, get, set) => h('div', { class: 'srow' }, h('div', { class: 'slabel' }, label, hint ? h('small', {}, hint) : null), h('div', { class: 'segs mini' }, opts.map(([v, l]) => h('button', { class: 'seg' + (get() === v ? ' on' : ''), type: 'button', onclick: (e) => { set(v); e.currentTarget.parentNode.querySelectorAll('.seg').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); } }, l))));
+  const close = modal({ title: 'Extract to…', body: [
+    inf ? null : opt('What to take', 'Pictures and PDF pages are copied sharp', [[false, 'Page only'], [true, 'With my writing']], () => withInk, (v) => { withInk = v; }),
+    h('button', { class: 'mi', type: 'button', onclick: async () => { close(); try { done(await newIn('notebook')); } catch (e) { console.error(e); toast('Could not extract'); } } }, h('span', { class: 'ico' }, icon('book', 20)), 'New notebook'),
+    h('button', { class: 'mi', type: 'button', onclick: async () => { close(); try { done(await newIn('whiteboard')); } catch (e) { console.error(e); toast('Could not extract'); } } }, h('span', { class: 'ico' }, icon('board', 20)), 'New whiteboard'),
+    others.length ? h('div', { class: 'mhead', style: 'margin-top:10px' }, 'Add to an existing note') : null,
+    ...others.map((m) => h('button', { class: 'mi', type: 'button', onclick: async () => { close(); try { const doc = await db.getDoc(m.id), meta = await db.getMeta(m.id); done(await place('old', doc, meta)); } catch (e) { console.error(e); toast('Could not extract'); } } }, h('span', { class: 'ico' }, icon(m.type === 'whiteboard' ? 'board' : 'book', 20)), m.title)),
+  ], actions: [{ label: 'Cancel' }] });
+}
+
+/* ---- tidy up storage: pictures, recordings and files that no note uses any more ---- */
+async function cleanupStorage(manual) {
+  if (PANE) return null;
+  const busy = S.tabs.some((t) => t.hist && (t.hist.u.length || t.hist.r.length)) || (S.hist && (S.hist.u.length || S.hist.r.length));
+  if (busy && !manual) return null;
+  if (S.doc) await saveNow().catch(() => {});
+  if (manual) { S.tabs.forEach((t) => { if (t.hist) t.hist = { u: [], r: [] }; }); if (S.hist) S.hist = S.tab && S.tab.hist ? S.tab.hist : { u: [], r: [] }; if (typeof updateUR === 'function') try { updateUR(); } catch {} }
+  const metas = await db.listMeta(), ids = new Set(metas.map((m) => m.id)), used = new Set();
+  for (const m of metas) { if (m.type === 'folder') continue; const d = await db.getDoc(m.id).catch(() => null); if (!d) continue; for (const pg of d.pages || []) for (const it of pg.items || []) if (it.ref) used.add(it.ref); }
+  for (const t of await db.listTpl().catch(() => [])) for (const it of t.items || []) if (it.ref) used.add(it.ref);
+  let freed = 0, files = 0;
+  for (const key of await db.keys('assets')) {
+    if (used.has(key) || String(key).startsWith('tplimg:fc_')) continue;
+    const b = await db.getRaw('assets', key).catch(() => null); freed += (b && b.size) || 0; files++;
+    await db.delAsset(key);
+  }
+  for (const key of await db.keys('pdfs')) if (!ids.has(key)) { const b = await db.getRaw('pdfs', key).catch(() => null); freed += (b && b.byteLength) || 0; files++; await db.delPdf(key); }
+  let idx = 0; for (const e of await db.listIdx().catch(() => [])) if (!ids.has(e.id)) { await db.delIdx(e.id); idx++; }
+  prefs.set('lastClean', Date.now()); return { freed, files, idx };
+}
+function cleanupBoot() { if (PANE || !prefs.get('autoClean', true) || Date.now() - prefs.get('lastClean', 0) < 7 * DAY) return; setTimeout(() => cleanupStorage(false).catch((e) => console.warn('cleanup', e)), 45000); }
+const fmtMB = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+
+/* ---- layers: each page can have several, drawn bottom to top ---- */
+function layersDialog() {
+  if (!S.doc) return;
+  const pi = isInf(S.doc) ? 0 : S.curPage || 0, pg = S.doc.pages[pi];
+  if (!pg.layers || !pg.layers.length) { pg.layers = [{ id: uid(), n: 'Layer 1', v: true, k: false }]; }
+  pg.al = pg.layers.some((L) => L.id === pg.al) ? pg.al : pg.layers[0].id;
+  const touch = () => { baseDirty = true; requestFrame(true); scheduleSave(); };
+  const count = (L) => [...pg.strokes, ...pg.items].filter((o) => layerOf(pg, o) === L).length;
+  const paint = () => {
+    const box = $('#laybox'); box.innerHTML = '';
+    [...pg.layers].reverse().forEach((L) => {
+      const i = pg.layers.indexOf(L), act = pg.al === L.id;
+      box.append(h('div', { class: 'layrow' + (act ? ' act' : '') },
+        h('button', { class: 'seg' + (L.v !== false ? ' on' : ''), type: 'button', title: 'Show or hide', 'aria-label': (L.v !== false ? 'Hide ' : 'Show ') + L.n, onclick: () => { L.v = L.v === false; touch(); paint(); } }, L.v !== false ? '👁' : '—'),
+        h('button', { class: 'seg' + (L.k ? ' on' : ''), type: 'button', title: 'Lock', 'aria-label': (L.k ? 'Unlock ' : 'Lock ') + L.n, onclick: () => { L.k = !L.k; touch(); paint(); } }, icon('lock', 16)),
+        h('button', { class: 'laytitle', type: 'button', onclick: () => { pg.al = L.id; paint(); } }, h('b', {}, L.n), h('small', {}, count(L) + ' item' + (count(L) === 1 ? '' : 's') + (act ? ' · drawing here' : ''))),
+        h('button', { class: 'seg', type: 'button', disabled: i === pg.layers.length - 1, 'aria-label': 'Move up', onclick: () => { [pg.layers[i], pg.layers[i + 1]] = [pg.layers[i + 1], pg.layers[i]]; touch(); paint(); } }, '↑'),
+        h('button', { class: 'seg', type: 'button', disabled: i === 0, 'aria-label': 'Move down', onclick: () => { [pg.layers[i], pg.layers[i - 1]] = [pg.layers[i - 1], pg.layers[i]]; touch(); paint(); } }, '↓'),
+        h('button', { class: 'seg', type: 'button', 'aria-label': 'Rename', onclick: async () => { const t = await ask('Layer name', L.n, 'Save'); if (t) { L.n = t.slice(0, 30); scheduleSave(); } $('#dlg').close(); layersDialog(); } }, icon('edit', 16)),
+        h('button', { class: 'seg', type: 'button', disabled: pg.layers.length < 2, 'aria-label': 'Delete layer', onclick: async () => {
+          const n = count(L); if (n && !(await confirmDlg('Delete “' + L.n + '”?', n + ' item' + (n === 1 ? '' : 's') + ' on it will be removed. Undo brings them back.', 'Delete'))) { $('#dlg').close(); layersDialog(); return; }
+          const objs = [...pg.strokes, ...pg.items].filter((o) => layerOf(pg, o) === L).map((o) => ({ pg, o })); if (objs.length) actRemoveObjs(objs, false);
+          pg.layers.splice(pg.layers.indexOf(L), 1); if (pg.al === L.id) pg.al = pg.layers[Math.max(0, i - 1)].id; touch(); $('#dlg').close(); layersDialog();
+        } }, icon('trash', 16))));
+    });
+  };
+  const add = () => { const L = { id: uid(), n: 'Layer ' + (pg.layers.length + 1), v: true, k: false }; pg.layers.push(L); pg.al = L.id; touch(); paint(); };
+  const move = () => {
+    const sl = S.sel; if (!sl) return toast('Select something first, then open Layers');
+    const objs = sl.items.filter((i) => i.pg === pg).map((i) => i.o), cur = pg.layers.find((L) => L.id === pg.al);
+    actProp(objs, 'ly', objs.map((o) => o.ly), objs.map(() => cur.id)); toast('Moved to “' + cur.n + '”'); paint();
+  };
+  modal({ title: 'Layers · ' + (isInf(S.doc) ? 'board' : 'page ' + (pi + 1)), body: [h('p', { class: 'note' }, 'Top of the list is drawn on top. Tap a name to draw on that layer. Hidden layers are also left out of exports.'), h('div', { id: 'laybox', class: 'laybox' }),
+    h('div', { class: 'segs mini', style: 'margin-top:10px' }, h('button', { class: 'seg', type: 'button', onclick: add }, '＋ Add layer'), h('button', { class: 'seg', type: 'button', onclick: move }, 'Move selection here'))],
+    actions: [{ label: 'Done', kind: 'primary' }] });
+  paint();
+}
+
+
+
+/* ---- note bar: choose, hide and reorder what sits in the top bar ---- */
+const BAR_ACTIONS = [
+  ['find', 'Find', 'search', () => openFind('')], ['mark', 'Bookmark page', 'bookmark', () => { if (!isInf(S.doc)) { toggleBookmark(S.curPage || 0); syncTopbar(); } }],
+  ['rec', 'Record', 'mic', () => (S.rec ? stopRecWrite() : startRecWrite())], ['layers', 'Layers', 'layers', () => layersPanel()],
+  ['undo', 'Undo', 'undo', () => undo()], ['redo', 'Redo', 'redo', () => redo()], ['pages', 'Pages', 'pages', () => { openSheet.sel = null; openSheet(); }],
+  ['share', 'Share', 'share', () => shareDialog()],
+  ['timer', 'Timer', 'clock', () => timerDialog()], ['present', 'Present', 'present', () => startPresent()],
+  ['focus', 'Focus mode', 'focus', () => { document.body.classList.add('focus'); setTimeout(resize, 30); toast('Tap the corner button to leave focus mode', 2200); }],
+  ['pin', 'Pin note', 'pin', () => pinNote(S.doc.id)], ['lock', 'Lock note', 'lock', () => { const lm = byId(S.doc.id); setLocked(S.doc.id, !(lm && lm.locked)); }],
+  ['addpg', 'Add page', 'plus', () => { if (isInf(S.doc)) return toast('Boards have one big canvas'); const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); }],
+  ['fit', 'Fit to screen', 'fit', () => { const t = {}; const keep = { ...S.view }; fitView(); Object.assign(t, S.view); S.view = keep; animateView(t, 280); }],
+  ['ruler', 'Ruler', 'ruler', () => { if (S.ruler) S.ruler = null; else { const [wx, wy] = toWorld(vw / 2, vh / 2); S.ruler = { x: wx, y: wy, a: 0 }; } requestFrame(); }],
+];
+const BAR_DEFAULT = ['find', 'mark', 'rec', 'layers', 'undo', 'redo', 'pages', 'share'];
+const barPrefs = () => { const p = prefs.get('bar', null); const order = p && Array.isArray(p.order) ? p.order.filter((k) => BAR_ACTIONS.some((a) => a[0] === k)) : [...BAR_DEFAULT]; return { order }; };
+const barSave = (b) => prefs.set('bar', b);
+const barBtnId = (k) => ({ find: 'btnFind', mark: 'btnMark', rec: 'btnRec', layers: 'btnLayers', undo: 'btnUndo', redo: 'btnRedo', pages: 'btnPages', share: 'btnShare' }[k] || 'bbtn-' + k);
+function buildTopbar() {
+  const tb = $('.topbar'), more = $('#btnMore'), on = barPrefs().order;
+  for (const [k, label, ic, fn] of BAR_ACTIONS) {
+    let b = document.getElementById(barBtnId(k));
+    if (!b) { b = h('button', { id: barBtnId(k), class: 'ib', 'aria-label': label, title: label }, icon(ic)); b.onclick = () => fn(); tb.insertBefore(b, more); }
+    const i = on.indexOf(k); b.hidden = i < 0; b.style.order = i < 0 ? 99 : 10 + i;
+  }
+  syncTopbar();
+}
+
+/* ---- layers panel: small floating card that stays open while you draw ---- */
+function layersPanel() {
+  if (!S.doc) return;
+  let el = $('#layp'); if (el) { el.remove(); return; }
+  const getPg = () => S.doc.pages[isInf(S.doc) ? 0 : S.curPage || 0];
+  const touch = () => { baseDirty = true; requestFrame(true); scheduleSave(); };
+  el = h('div', { id: 'layp', class: 'layp', role: 'dialog', 'aria-label': 'Layers' });
+  document.body.append(el);
+  const paint = () => {
+    const pg = getPg();
+    if (!pg.layers || !pg.layers.length) pg.layers = [{ id: uid(), n: 'Layer 1', v: true, k: false }];
+    pg.al = pg.layers.some((L) => L.id === pg.al) ? pg.al : pg.layers[0].id;
+    el.innerHTML = '';
+    el.append(h('div', { class: 'lphead' }, h('b', {}, 'Layers'), h('span', { class: 'sp' }),
+      h('button', { class: 'ib sm', 'aria-label': 'Add layer', title: 'Add layer', onclick: () => { const L = { id: uid(), n: 'Layer ' + (pg.layers.length + 1), v: true, k: false }; pg.layers.push(L); pg.al = L.id; touch(); paint(); } }, icon('plus', 18, 2.4)),
+      h('button', { class: 'ib sm', 'aria-label': 'Close', onclick: () => el.remove() }, icon('x', 18))));
+    [...pg.layers].reverse().forEach((L) => {
+      const i = pg.layers.indexOf(L), act = pg.al === L.id, n = [...pg.strokes, ...pg.items].filter((o) => layerOf(pg, o) === L).length;
+      el.append(h('div', { class: 'lprow' + (act ? ' act' : '') },
+        h('button', { class: 'ib sm' + (L.v !== false ? '' : ' off'), 'aria-label': L.v !== false ? 'Hide' : 'Show', onclick: () => { L.v = L.v === false; touch(); paint(); } }, icon(L.v !== false ? 'target' : 'x', 16)),
+        h('button', { class: 'lpname', title: 'Draw and edit on this layer', onclick: () => { pg.al = L.id; paint(); } }, h('b', {}, L.n), h('small', {}, String(n))),
+        h('button', { class: 'ib sm' + (L.k ? ' on' : ''), 'aria-label': L.k ? 'Unlock' : 'Lock', onclick: () => { L.k = !L.k; touch(); paint(); } }, icon('lock', 16)),
+        h('button', { class: 'ib sm', 'aria-label': 'Move up', disabled: i === pg.layers.length - 1, onclick: () => { [pg.layers[i], pg.layers[i + 1]] = [pg.layers[i + 1], pg.layers[i]]; touch(); paint(); } }, '↑'),
+        h('button', { class: 'ib sm', 'aria-label': 'Rename', onclick: async () => { const t = await ask('Layer name', L.n, 'Save'); if (t) { L.n = t.slice(0, 30); scheduleSave(); } $('#dlg').close(); paint(); } }, icon('edit', 15)),
+        h('button', { class: 'ib sm', 'aria-label': 'Delete layer', disabled: pg.layers.length < 2, onclick: async () => {
+          if (n && !(await confirmDlg('Delete “' + L.n + '”?', n + ' item' + (n === 1 ? '' : 's') + ' on it will be removed. Undo brings them back.', 'Delete'))) { $('#dlg').close(); return; }
+          const objs = [...pg.strokes, ...pg.items].filter((o) => layerOf(pg, o) === L).map((o) => ({ pg, o })); if (objs.length) actRemoveObjs(objs, false);
+          pg.layers.splice(i, 1); if (pg.al === L.id) pg.al = pg.layers[Math.max(0, i - 1)].id; touch(); paint(); } }, icon('trash', 15))));
+    });
+    el.append(h('button', { class: 'btn small wide', onclick: () => {
+      const sl = S.sel; if (!sl) return toast('Select something first');
+      const objs = sl.items.filter((x) => x.pg === pg).map((x) => x.o), cur = pg.layers.find((L) => L.id === pg.al);
+      actProp(objs, 'ly', objs.map((o) => o.ly), objs.map(() => cur.id)); toast('Moved to “' + cur.n + '”'); paint(); } }, 'Move selection here'));
+  };
+  el._paint = paint; paint();
+}
+
+/* ---- bookmarks: pinned notes and bookmarked pages from every note ---- */
+async function bookmarksDialog() {
+  const metas = L.metas.filter((m) => !m.trashed && m.type !== 'folder');
+  for (const m of metas) if (!m.bms) {                                         // notes saved before bookmarks were indexed
+    const d = await db.getDoc(m.id).catch(() => null); if (!d) continue;
+    m.bms = d.pages.map((p, i) => (p.bm ? i : -1)).filter((i) => i >= 0);
+    const f = await db.getMeta(m.id); if (f) { f.bms = m.bms; await db.saveMeta(f); }
+  }
+  const pins = metas.filter((m) => m.pinned), marks = metas.flatMap((m) => (m.bms || []).map((pi) => ({ m, pi })));
+  const row = (title, sub, fn, ic) => h('button', { class: 'mi', type: 'button', onclick: () => { $('#dlg').close(); fn(); } }, h('span', { class: 'ico' }, icon(ic, 20)), h('span', { style: 'flex:1;text-align:left' }, title, sub ? h('small', { style: 'display:block;opacity:.65' }, sub) : null));
+  modal({ title: 'Bookmarks', body: [
+    h('div', { class: 'mhead' }, 'Pinned notes'), ...(pins.length ? pins.map((m) => row(m.title, m.locked ? 'Locked' : '', () => openDoc(m.id), m.locked ? 'lock' : 'pin')) : [h('p', { class: 'note' }, 'Pin a note from its ⋯ menu on Home, or from the note menu.')]),
+    h('div', { class: 'mhead', style: 'margin-top:12px' }, 'Bookmarked pages'), ...(marks.length ? marks.map(({ m, pi }) => row(m.title, 'Page ' + (pi + 1), () => goTarget({ doc: m.id, pg: pi, x: PW / 2, y: 120 }), 'bookmark')) : [h('p', { class: 'note' }, 'In a note, open ⋯ and choose Bookmark this page.')]),
+  ], actions: [{ label: 'Close' }] });
+}
+async function pinNote(id) { const f = await db.getMeta(id); if (!f) return; f.pinned = !f.pinned; await db.saveMeta(f); await refreshLibrary(); toast(f.pinned ? 'Pinned to the top of Home' : 'Unpinned'); }
+
+/* ---- home-screen widget: random pictures from the notes you allowed ---- */
+const dataUrlB64 = (u) => String(u || '').split(',')[1] || '';
+async function shrinkJpeg(blob, max) {
+  const bmp = await createImageBitmap(blob), k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+  return dataUrlB64(c.toDataURL('image/jpeg', 0.8));
+}
+let wgT = 0;
+function widgetDirty(fast) { if (!wgAvail() || PANE) return; clearTimeout(wgT); wgT = setTimeout(() => rebuildWidget().catch((e) => console.warn('widget', e)), fast ? 1500 : 90000); }
+async function rebuildWidget() {
+  if (!wgAvail() || PANE) return 0;
+  const ms = L.metas.filter((m) => m.widget && !m.locked && !m.trashed && m.type !== 'folder'), items = [];
+  for (const m of ms) {
+    const d = await db.getDoc(m.id).catch(() => null); if (!d) continue;
+    for (let pi = 0; pi < d.pages.length && items.length < 200; pi++) for (const it of d.pages[pi].items || []) {
+      if (it.k !== 'img' || !it.ref) continue;
+      items.push({ ref: it.ref, doc: m.id, pg: pi, x: it.x + (it.w || 0) / 2, y: it.y + ((it.w || 0) / (it.ar || 1)) / 2, title: m.title });
+    }
+  }
+  for (let i = items.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [items[i], items[j]] = [items[j], items[i]]; }
+  const out = [];
+  for (const it of items) {
+    if (out.length >= 40) break;
+    const blob = await db.getAsset(it.ref).catch(() => null); if (!blob) continue;
+    try { out.push({ data: await shrinkJpeg(blob, 640), doc: it.doc, pg: it.pg, x: it.x, y: it.y, title: it.title }); } catch {}
+  }
+  if (!out.length) for (const m of ms.slice(0, 20)) if (m.thumb) out.push({ data: dataUrlB64(m.thumb), doc: m.id, pg: 0, x: PW / 2, y: 200, title: m.title });
+  return wgSet(out);
+}
+async function setWidget(id, on) {
+  const f = await db.getMeta(id); if (!f) return;
+  if (on && f.locked) return toast('Locked notes can never be shown on the widget');
+  if (on) f.widget = true; else delete f.widget;
+  await db.saveMeta(f); await refreshLibrary();
+  toast(on ? 'This note can appear on the widget' : 'Removed from the widget'); widgetDirty(true);
+}
+
+/* ---- pictures sent to Anota from other apps ---- */
+async function shareImages(files) {
+  files = files.filter((f) => f && /^image\//.test(f.type)); if (!files.length) return;
+  const open = S.doc && S.tab ? S.doc.title : null, many = files.length > 1;
+  const go = async (toOpen) => {
+    if (!toOpen) { await quickNote(); await new Promise((r) => setTimeout(r, 400)); }
+    for (let i = 0; i < files.length; i++) {
+      if (i > 0 && !isInf(S.doc)) { const n = S.doc.pages.length; addPageAt(n, blankPageLike(n - 1)); scrollToPage(n); await new Promise((r) => setTimeout(r, 350)); }
+      await insertImage(files[i]);
+    }
+  };
+  modal({ title: many ? files.length + ' pictures received' : 'Picture received', body: [h('p', { class: 'note' }, 'Where should it go?')],
+    actions: [{ label: 'Cancel' }, ...(open ? [{ label: 'Add to “' + open.slice(0, 24) + '”', fn: () => { go(true); } }] : []), { label: 'New note', kind: 'primary', fn: () => { go(false); } }] });
+}
+let shBusy = false;
+async function consumeShared() {
+  if (PANE || shBusy || !shAvail()) return; shBusy = true;
+  try {
+    const { files: fs, open } = await shPending();
+    if (open && byId(open.doc)) goTarget({ doc: open.doc, pg: open.pg, x: open.x, y: open.y });
+    if (fs.length) { const imgs = fs.filter((f) => /^image\//.test(f.type)); if (imgs.length) shareImages(imgs); for (const f of fs.filter((x) => !/^image\//.test(x.type))) await importDocument(f); }
+  }
+  catch (e) { console.warn('share', e); } finally { shBusy = false; }
+}
+
+/* ---- PIN / fingerprint lock ---- */
+const lockUI = { h, icon };
+async function noteGate(id) {
+  const m = byId(id); if (!m || !m.locked || S.unlocked.has(id) || !lk.hasPin()) return true;
+  const ok = await lk.gate({ title: 'Locked note', hint: m.title, cancel: true, ...lockUI });
+  if (ok) S.unlocked.add(id);
+  return ok;
+}
+function setPinDialog() {
+  return new Promise((res) => {
+    const a = h('input', { type: 'password', inputmode: 'numeric', maxlength: 8, placeholder: 'New PIN (4 to 8 digits)', autocomplete: 'off' });
+    const b = h('input', { type: 'password', inputmode: 'numeric', maxlength: 8, placeholder: 'Repeat the PIN', autocomplete: 'off' });
+    let ok = false, saving = false;
+    modal({ title: 'Choose a PIN', body: [h('p', { class: 'note' }, 'You will use it to open locked notes. If you forget it, locked notes cannot be opened here, so write it down.'), a, b],
+      actions: [{ label: 'Cancel' }, { label: 'Save PIN', kind: 'primary', fn: () => {
+        if (!/^\d{4,8}$/.test(a.value)) { toast('Use 4 to 8 digits'); return false; }
+        if (a.value !== b.value) { toast('The two PINs differ'); return false; }
+        saving = true; lk.setPin(a.value).then(() => { ok = true; toast('PIN saved'); res(true); });
+      } }] });
+    $('#dlg').addEventListener('close', () => { if (!saving) res(false); }, { once: true });
+    setTimeout(() => a.focus(), 60);
+  });
+}
+async function ensurePin() { return lk.hasPin() || (await setPinDialog()); }
+async function verifyNow(title) { return !lk.hasPin() || (await lk.gate({ title: title || 'Enter your PIN', cancel: true, ...lockUI })); }
+async function setLocked(id, on) {
+  if (on && !(await ensurePin())) return false;
+  if (!on && !(await verifyNow('Remove the lock'))) return false;
+  const f = await db.getMeta(id); if (!f) return false;
+  if (on) f.locked = true; else delete f.locked;
+  await db.saveMeta(f);
+  if (on) S.unlocked.add(id); else S.unlocked.delete(id);
+  if (on && f.widget) { delete f.widget; await db.saveMeta(f); }
+  await refreshLibrary(); widgetDirty(true); toast(on ? 'Note locked' : 'Lock removed'); return true;
+}
+function relockNow(why) {
+  S.unlocked.clear();
+  if (S.tab) { const m = byId(S.tab.id); if (m && m.locked && lk.hasPin()) lk.gate({ title: 'Locked note', hint: m.title, cancel: true, ...lockUI }).then((ok) => { if (ok) S.unlocked.add(S.tab.id); else switchTo(null); }); }
+}
+let hiddenAt = 0;
+function wireLock() {
+  document.addEventListener('visibilitychange', () => {
+    if (PANE || !lk.hasPin()) return;
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    const c = lk.lockCfg();
+    if (hiddenAt && (Date.now() - hiddenAt) / 1000 >= c.relock) {
+      if (c.app) { S.unlocked.clear(); lk.gate({ title: 'Anota is locked', cancel: false, ...lockUI }).then(() => relockNow()); }
+      else relockNow();
+    }
+    hiddenAt = 0;
+  });
+}
+function lockPane(repaint) {
+  const c = lk.lockCfg(), has = lk.hasPin(), rows = [];
+  const btn = (label, fn, cls = '') => h('button', { class: 'seg ' + cls, onclick: fn }, label);
+  const row = (label, hint, ...ctl) => h('div', { class: 'srow' }, h('div', { class: 'slabel' }, label, hint ? h('small', {}, hint) : null), h('div', { class: 'segs mini' }, ctl));
+  rows.push(h('p', { class: 'note' }, 'Locked notes ask for a PIN or your fingerprint before they open. Their thumbnails and search results are hidden. This keeps people who pick up your tablet out; it does not encrypt the files, so keep your backup folder private too.'));
+  if (!has) rows.push(row('PIN', 'Not set yet', btn('Set a PIN', async () => { if (await setPinDialog()) repaint(); }, 'on')));
+  else {
+    rows.push(row('PIN', 'Set', btn('Change', async () => { if (await verifyNow('Enter your current PIN')) { if (await setPinDialog()) repaint(); } }),
+      btn('Remove', async () => { if (!(await verifyNow('Enter your PIN to remove it'))) return; if (!(await confirmDlg('Remove the PIN?', 'Every locked note becomes unlocked.', 'Remove'))) return;
+        for (const m of L.metas.filter((x) => x.locked)) { const f = await db.getMeta(m.id); delete f.locked; await db.saveMeta(f); }
+        lk.clearPin(); S.unlocked.clear(); await refreshLibrary(); repaint(); }, 'danger')));
+    rows.push(row('Fingerprint', c.bio ? 'On. The PIN still works too' : 'Open locked notes with your fingerprint', btn(c.bio ? 'Turn off' : 'Turn on', async () => {
+      if (c.bio) { lk.setOpt('bio', false); return repaint(); }
+      if (!(await lk.bioAvailable())) return toast('This device has no fingerprint or screen lock set up for this');
+      if (await lk.bioEnable()) { toast('Fingerprint is on'); repaint(); } else toast('Could not turn on the fingerprint');
+    }, c.bio ? 'on' : '')));
+    rows.push(row('Lock again', 'After the app has been out of view for', ...[[0, 'At once'], [60, '1 min'], [300, '5 min'], [900, '15 min']].map(([v, l]) => btn(l, () => { lk.setOpt('relock', v); repaint(); }, c.relock === v ? 'on' : ''))));
+    rows.push(row('Lock the whole app', 'Ask for the PIN when Anota opens', btn('Off', () => { lk.setOpt('app', false); repaint(); }, !c.app ? 'on' : ''), btn('On', () => { lk.setOpt('app', true); repaint(); }, c.app ? 'on' : '')));
+  }
+  return rows;
+}
 function cardMenu(m) {
   if (m.trashed) {
     const left = Math.max(0, TRASH_DAYS - Math.floor((Date.now() - m.trashed) / DAY));
@@ -2954,6 +3731,8 @@ function cardMenu(m) {
     return;
   }
   const close = modal({ title: m.title, body: [
+    !isFolder(m) && wgAvail() && !m.locked && mi('image', m.widget ? 'Stop showing on widget' : 'Show on home widget', async () => { close(); await setWidget(m.id, !m.widget); }),
+    !isFolder(m) && mi('lock', m.locked ? 'Remove lock' : 'Lock with PIN', async () => { close(); await setLocked(m.id, !m.locked); }),
     mi('pin', m.pinned ? 'Unpin' : 'Pin to top', async () => { close(); const f = await db.getMeta(m.id); f.pinned = !m.pinned; await db.saveMeta(f); refreshLibrary(); }),
     !isFolder(m) && mi('tag', (m.tags || []).length ? 'Tags (' + m.tags.length + ')…' : 'Add tags…', () => { close(); tagsDialog(m); }),
     mi('edit', 'Rename', async () => {
@@ -2964,10 +3743,12 @@ function cardMenu(m) {
       const T = S.tabs.find((x) => x.id === m.id); if (T) { T.title = t; if (T.doc) T.doc.title = t; renderTabs(); }
       refreshLibrary();
     }),
+    isFolder(m) && mi('palette', 'Colour and icon…', () => { close(); folderStyleDialog(m); }),
     mi('move', 'Move to…', () => { close(); moveDialog(m); }),
-    !PANE && !isFolder(m) && mi('split', 'Open in split screen', () => { close(); openSplit(m.id); }),
-    !isFolder(m) && mi('copy', 'Duplicate', async () => { close(); await duplicateDoc(m); refreshLibrary(); }),
-    !isFolder(m) && mi('text', 'Copy typed text', () => { close(); copyDocText(m); }),
+    mi('check', 'Select several…', () => { close(); L.sel = new Set([m.id]); renderLibrary(); }),
+    !PANE && !isFolder(m) && !m.locked && mi('split', 'Open in split screen', () => { close(); openSplit(m.id); }),
+    !isFolder(m) && !m.locked && mi('copy', 'Duplicate', async () => { close(); await duplicateDoc(m); refreshLibrary(); }),
+    !isFolder(m) && !m.locked && mi('text', 'Copy typed text', () => { close(); copyDocText(m); }),
     mi('trash', 'Move to Trash', async () => {
       close();
       const n = isFolder(m) ? descendants(m.id).size - 1 : 0;
@@ -3000,7 +3781,7 @@ function toggleFab(force) {
   m.hidden = !open; $('#fab').classList.toggle('open', open);
   if (open) {
     m.innerHTML = '';
-    [['book', 'New notebook', () => newDialog('notebook')], ['board', 'New whiteboard', () => newDialog('whiteboard')], ['pdf', 'Import PDF / Word', () => $('#file').click()], ['folderPlus', 'New folder', () => folderDialog()], ['bolt', 'Quick note', quickNote]]
+    [['book', 'New notebook', () => newDialog('notebook')], ['board', 'New whiteboard', () => newDialog('whiteboard')], ['pdf', 'Import PDF / Word / Samsung Notes', () => $('#file').click()], ['folderPlus', 'New folder', () => folderDialog()], ['bolt', 'Quick note', quickNote]]
       .forEach(([ic, t, fn], i) => m.append(h('button', { class: 'fabitem', style: `animation-delay:${(3 - i) * 40}ms`, onclick: () => { toggleFab(false); fn(); } }, h('span', { class: 'ico' }, icon(ic, 20)), t)));
   }
 }
@@ -3110,7 +3891,7 @@ function pickTemplate({ title = 'Templates', allowNone = false } = {}) {
     let close;
     const pick = (r) => { fin(r); close(); };
     const paintMine = async () => {
-      mine.innerHTML = ''; const list = (await db.listTpl().catch(() => [])).sort((a, b) => b.created - a.created);
+      mine.innerHTML = ''; const list = (await db.listTpl().catch(() => [])).filter((r) => !r.card).sort((a, b) => b.created - a.created);
       mine.append(h('button', { class: 'tplcard tplnew', onclick: async () => { const r = await tableBuilder(); if (r) pick(r); else fin(undefined); } }, h('div', { class: 'tplplus' }, icon('plus', 26, 2)), h('span', {}, 'Build a table')));
       for (const r of list) mine.append(tplCard(r, () => pick(r), async () => {
         if (!(await confirmDlg('Delete “' + r.name + '”?', 'Notes already made from it are not affected.'))) return;
@@ -3202,8 +3983,74 @@ async function importDocx(file) {
   } catch (e) { console.error(e); toast(/encrypted/.test(String(e)) ? 'Password-protected Word files are not supported' : 'That Word file could not be converted'); }
 }
 function importDocument(file) {
+  if (/\.sdocx$/i.test(file.name)) return importSdocx(file);
   if (/\.(docx?|rtf)$/i.test(file.name) || /wordprocessingml|msword|rtf/.test(file.type)) importDocx(file);
   else importPdf(file);
+}
+/** Samsung Notes (.sdocx): pen strokes, colours, pictures, page paper and PDF backgrounds come across as editable Anota ink */
+async function importSdocx(file) {
+  toast('Reading Samsung Notes file…', 60000);
+  try {
+    const { readSdocx, samsungPaper } = await import('./sdocx.js');
+    const r = await readSdocx(await file.arrayBuffer());
+    if (!r.pages.length) throw new Error('empty');
+    const withPdf = !!r.pdf && r.pdf.bytes && r.pages.some((p) => p.bg.pdf.length);
+    const doc = makeDoc({ type: withPdf ? 'pdf' : 'notebook', title: file.name.replace(/\.sdocx$/i, '') || 'Samsung Notes', paper: { style: 'blank', color: 'white' } });
+    let pdfjsDoc = null;
+    if (withPdf) {
+      const buf = r.pdf.bytes.slice().buffer;
+      await db.putPdf(doc.id, buf.slice(0));
+      try { pdfjsDoc = await (await loadPdfjs()).getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise; } catch { pdfjsDoc = null; }
+    }
+    const hex = (n) => '#' + n.toString(16).padStart(6, '0');
+    let nStrokes = 0, nImgs = 0, nPaper = 0, nPdf = 0;
+    doc.pages = [];
+    for (const sp of r.pages) {
+      let k = PW / (sp.w || 1080), ox = 0, oy = 0, h2 = Math.max(300, Math.round((sp.h || 1527) * k)), pdfIndex = null;
+      const rec = sp.bg.pdf[0];
+      if (withPdf && rec && pdfjsDoc && rec.index < pdfjsDoc.numPages) {              // the page sits on a PDF page: ink is placed relative to that PDF
+        const pp = await pdfjsDoc.getPage(rec.index + 1), v = pp.getViewport({ scale: 1 }); pp.cleanup();
+        const [l, t, rr, bb] = rec.rect, okRect = [l, t, rr, bb].every(Number.isFinite) && rr - l > sp.w * 0.3 && bb - t > sp.h * 0.2;
+        if (okRect) { k = PW / (rr - l); ox = l; oy = t; }
+        h2 = Math.round(PW * v.height / v.width); pdfIndex = rec.index; nPdf++;
+      }
+      const pg = newPage(h2, pdfIndex != null ? { pdf: pdfIndex } : {});
+      if (pdfIndex == null) {
+        const paper = samsungPaper(sp.bg, sp.w, sp.h, k, h2);
+        if (paper) { pg.tpl = { ops: paper.ops }; nPaper++; }
+        const bi = sp.bg.imageId != null ? r.bgImages.get(sp.bg.imageId) : null;
+        if (bi) {                                                                       // a picture used as the page background: covers the page
+          try {
+            const blob = new Blob([bi.bytes], { type: bi.mime }), bmp = await createImageBitmap(blob), ar = bmp.width / bmp.height; bmp.close && bmp.close();
+            const ref = 'img:' + uid(); await db.putAsset(ref, blob);
+            const wv = Math.max(PW, h2 * ar), hv = wv / ar;
+            pg.items.push({ id: uid(), k: 'img', ref, ar, w: wv, x: (PW - wv) / 2, y: (h2 - hv) / 2, bg: 1 }); nPaper++;
+          } catch { /* unreadable background picture: skipped */ }
+        }
+      }
+      for (const st of sp.strokes) {
+        const p = new Array(st.pts.length);
+        for (let i = 0; i < st.pts.length; i += 3) { p[i] = (st.pts[i] - ox) * k; p[i + 1] = (st.pts[i + 1] - oy) * k; p[i + 2] = st.pts[i + 2]; }
+        pg.strokes.push({ t: st.hl ? 'hl' : 'ball', c: hex(st.rgb), s: Math.max(0.8, st.w * k), vp: !st.hl, p }); nStrokes++;
+      }
+      for (const im of sp.images) {
+        if (!(im.w > 0 && im.h > 0)) continue;
+        const ref = 'img:' + uid();
+        await db.putAsset(ref, new Blob([im.bytes], { type: im.mime }));
+        pg.items.push({ id: uid(), k: 'img', ref, ar: im.w / im.h, w: im.w * k, x: (im.x - ox) * k, y: (im.y - oy) * k, ...(im.rot ? { r: im.rot * Math.PI / 180 } : {}) }); nImgs++;
+      }
+      doc.pages.push(pg);
+    }
+    try { pdfjsDoc && pdfjsDoc.destroy(); } catch {}
+    await db.saveDoc(doc, { id: doc.id, title: doc.title, type: doc.type, updated: doc.updated, pages: doc.pages.length, thumb: null, parent: L.folder });
+    $('#toast').hidden = true;
+    await refreshLibrary(); openDoc(doc.id);
+    const sk = r.skipped, bits = [];
+    if (sk.objects) bits.push(sk.objects + ' text, shape or other item' + (sk.objects === 1 ? '' : 's'));
+    if (sk.strokes) bits.push(sk.strokes + ' stroke' + (sk.strokes === 1 ? '' : 's'));
+    if (sk.pdf) bits.push('the PDF behind the pages');
+    toast(`Imported ${doc.pages.length} page${doc.pages.length === 1 ? '' : 's'}, ${nStrokes} strokes${nImgs ? ', ' + nImgs + ' picture' + (nImgs === 1 ? '' : 's') : ''}${nPdf ? ', ' + nPdf + ' PDF page' + (nPdf === 1 ? '' : 's') : ''}${nPaper ? ', page backgrounds' : ''}.` + (bits.length ? ' Not brought over: ' + bits.join(', ') + '.' : ''), bits.length ? 7000 : 3500);
+  } catch (e) { console.error(e); toast(/not a Samsung/.test(String(e.message)) ? 'That is not a Samsung Notes file' : 'That Samsung Notes file could not be read', 4500); }
 }
 async function importPdf(file) {
   toast('Importing PDF…', 10000);
@@ -3245,6 +4092,7 @@ async function importPdf(file) {
 function renderTabs() {
   const el = $('#tabs'); el.innerHTML = '';
   document.body.classList.toggle('at-home', !S.tab);
+  try { updateReadChip(); } catch {}
   el.append(h('button', { class: 'tab home' + (S.tab ? '' : ' on'), 'aria-label': 'Home', onclick: () => switchTo(null) }, icon('home', 20)));
   const strip = h('div', { class: 'tabscroll' });      // only this part scrolls; Home, +, and Split stay put
   for (const t of S.tabs) {
@@ -3347,9 +4195,21 @@ function toggleSplit() {
 function dragToSplit(el, info, opts = {}) {
   if (PANE) return;
   let timer = null, ready = false, drag = null, sx = 0, sy = 0;
+  const folderZones = () => {
+    if (!$('#library') || $('#library').hidden || !$('#grid').offsetParent) return [];
+    const me = info(), ban = me.type === 'folder' ? descendants(me.id) : new Set(), zs = [];
+    document.querySelectorAll('#grid .card[data-fid], #crumbs .crumb[data-fid], #rail .rb[data-fid]').forEach((n) => {
+      const fid = n.dataset.fid; if (ban.has(fid) || fid === me.id) return;
+      const r = n.getBoundingClientRect(); if (!r.width) return;
+      zs.push({ kind: 'folder', fid, r: { left: r.left, top: r.top, width: r.width, height: r.height }, label: n.classList.contains('card') ? 'Move here' : '' });
+    });
+    return zs;
+  };
   const zonesFor = () => {
     const W = innerWidth, H = innerHeight, port = isPortrait(), zs = [];
     panes.forEach((P, i) => { const r = P.wrap.getBoundingClientRect(); zs.push({ kind: 'replace', idx: i, r, label: 'Open here' }); });
+    if (opts.noSplit) return folderZones();
+    zs.push(...folderZones());
     if (panes.length < MAX_PANES) zs.unshift({ kind: 'add', r: port ? { left: 0, top: H * 0.72, width: W, height: H * 0.28 } : { left: W * 0.74, top: 0, width: W * 0.26, height: H }, label: 'Drop to open beside' });
     return zs;
   };
@@ -3361,8 +4221,8 @@ function dragToSplit(el, info, opts = {}) {
       window.addEventListener('pointermove', m); window.addEventListener('pointerup', u); window.addEventListener('pointercancel', u);
       winOff = () => { window.removeEventListener('pointermove', m); window.removeEventListener('pointerup', u); window.removeEventListener('pointercancel', u); winOff = null; };
     }
-    const layer = h('div', { class: 'dropzones' }), ghost = h('div', { class: 'dragghost' }, icon(info().type === 'whiteboard' ? 'board' : info().type === 'pdf' ? 'pdf' : 'book', 18), info().title);
-    const zs = zonesFor().map((z) => ({ ...z, el: h('div', { class: 'dz', style: `left:${z.r.left}px;top:${z.r.top}px;width:${z.r.width}px;height:${z.r.height}px` }, h('span', {}, z.label)) }));
+    const layer = h('div', { class: 'dropzones' }), ghost = h('div', { class: 'dragghost' }, icon(info().type === 'whiteboard' ? 'board' : info().type === 'pdf' ? 'pdf' : info().type === 'folder' ? 'folder' : 'book', 18), info().title);
+    const zs = zonesFor().map((z) => ({ ...z, el: h('div', { class: 'dz' + (z.kind === 'folder' ? ' fz' : ''), style: `left:${z.r.left}px;top:${z.r.top}px;width:${z.r.width}px;height:${z.r.height}px` }, h('span', {}, z.label)) }));
     zs.forEach((z) => layer.append(z.el));
     document.body.append(layer, ghost);
     drag = { layer, ghost, zs };
@@ -3398,6 +4258,7 @@ function dragToSplit(el, info, opts = {}) {
         if (!cancel && opts.onReorder) opts.onReorder([...opts.strip.querySelectorAll('.tab[data-id]')].map((t) => t.dataset.id)); else if (opts.onCancel) opts.onCancel();
         return;
       }
+      if (!cancel && d.hit && d.hit.kind === 'folder') { el._swallow = true; setTimeout(() => (el._swallow = false), 400); moveIntoFolder(info(), d.hit.fid); return; }
       if (!cancel && d.hit) { el._swallow = true; setTimeout(() => (el._swallow = false), 400); openSplit(info().id, d.hit.kind === 'replace' ? d.hit.idx : null); return; }
       el._swallow = true; setTimeout(() => (el._swallow = false), 400);
     } else if (wasReady && !cancel && opts.onHold) { el._swallow = true; setTimeout(() => (el._swallow = false), 400); opts.onHold(); }
@@ -3437,13 +4298,13 @@ async function loadTab(T) {
 async function leaveTab() {
   const T = S.tab; if (!T) return;
   commitEditor(); closeFind(); closeComment(); closePop(); closeMenu(); $("#sheet").hidden = true; clearSel(); exitPresent(); closeZoom(); stopVideo(); stopAudio();
-  T.view = { ...S.view }; T.vw = vw; T.hist = S.hist; T.curPage = S.curPage;
+  T.view = { ...S.view }; T.vw = vw; T.hist = S.hist; T.curPage = S.curPage; T.ruler = S.ruler; S.ruler = null;
   S.thumb = (await makeThumb()) || S.thumb; T.thumb = S.thumb;
   await saveNow();
   S.tab = null; S.doc = null; S.pdf = null; S.act = null; S.mode = null; ptr.clear();
 }
 async function showEditor(T) {
-  S.tab = T; S.doc = T.doc; S.pdf = T.pdf; S.hist = T.hist; S.thumb = T.thumb; S.curPage = T.curPage || 0;
+  S.ruler = T.ruler || null; S.tab = T; S.doc = T.doc; S.pdf = T.pdf; S.hist = T.hist; S.thumb = T.thumb; S.curPage = T.curPage || 0;
   pdfCache = T.pdfCache; pdfPending = T.pdfPending; pdfQueue.length = 0;
   S.sel = null; S.act = null; S.mode = null; S.ghosts = []; S.viewAnim = null;
   $('#library').hidden = true;
@@ -3475,6 +4336,7 @@ async function switchTo(id) {
   if (switching) return;
   if (id != null && S.tab && S.tab.id === id) return;
   if (id == null && !S.tab) return;
+  if (id != null && !(await noteGate(id))) return;
   switching = true;
   try {
     if (S.tab) await leaveTab();
@@ -3670,6 +4532,7 @@ function drawPreview(cvs, kind, T) {
   const spec = PEN[kind];
   const st = { t: kind === 'shape' ? 'ball' : kind, c: T.c, s: T.s, vp: !!spec && kind !== 'marker', p };
   if (kind === 'shape') st.vp = false;
+  if (kind === 'hl' && T.tape) st.tape = 1;
   drawStroke(g, st, dark);
 }
 function openPop(kind) {
@@ -3724,6 +4587,7 @@ function openPop(kind) {
         insBtn('link', 'Note link', () => { closePop(); noteLinkDialog(); }),
         insBtn('arrow', 'Web link', () => { closePop(); linkDialog(); })),
       ...sec('Tools',
+        !isInf(S.doc) ? insBtn('board', 'Whiteboard', () => { closePop(); boardDialog(); }) : null,
         insBtn('ruler', S.ruler ? 'Hide ruler' : 'Ruler', () => { closePop(); if (S.ruler) S.ruler = null; else { const [wx, wy] = toWorld(vw / 2, vh / 2); S.ruler = { x: wx, y: wy, a: 0 }; toast('Draw along the edge for straight lines. Drag the ruler to move it.', 2800); } requestFrame(); }),
         insBtn('search', S.zw ? 'Close zoom' : 'Zoom', () => { closePop(); openZoom(); }),
         S.pdf ? insBtn('text', 'Select text', () => { closePop(); startPtext(); }) : null,
@@ -3747,6 +4611,8 @@ function openPop(kind) {
       h('div', { class: 'segs' }, [['stroke', 'Stroke'], ['area', 'Area'], ['hl', 'Highlighter']].map(([v, l]) => h('button', { class: 'seg' + (S.eraserMode === v ? ' on' : ''), onclick: () => { S.eraserMode = v; prefs.set('eraserMode', v); openPop('eraser'); } }, l))),
       h('p', { class: 'note' }, S.eraserMode === 'stroke' ? 'Removes whole strokes you touch.' : S.eraserMode === 'area' ? 'Rubs out only the part under the eraser.' : 'Only erases highlighter, your pen ink stays.'));
   } else {
+    if (k === 'hl') pop.append(h('div', { class: 'lbl' }, 'Style'), h('div', { class: 'segs' }, [[false, 'Highlighter'], [true, 'Tape']].map(([v, l]) => h('button', { class: 'seg' + (!!T.tape === v ? ' on' : ''), onclick: () => { T.tape = v; if (v && T.s < 14) T.s = 22; savePrefs(); openPop('hl'); } }, l))),
+      h('p', { class: 'note' }, T.tape ? 'Tape covers writing and pictures under it. Erase it to uncover them again. Draw a straight line, then pause, to lay it neatly.' : 'See-through colour over your text.'));
     pop.append(prev);
     const pal = k === 'hl' ? HL_PALETTE : PALETTE;
     const row = h('div', { class: 'swatches' });
@@ -3755,6 +4621,7 @@ function openPop(kind) {
     pal.forEach((c) => row.append(h('button', { class: 'sw', 'data-c': c, style: `background:${c}`, 'aria-label': c, onclick: () => { setC(c); paint(); } })));
     const ci = h('input', { type: 'color', value: T.c.length === 7 ? T.c : '#000000', oninput: (e) => { setC(e.target.value); paint(); }, onchange: (e) => { rememberColor(e.target.value); } });
     row.append(h('div', { class: 'sw custom' }, ci));
+    row.append(h('button', { class: 'sw eye', type: 'button', 'aria-label': 'Pick a colour from the page', title: 'Eyedropper', onclick: () => eyedrop((c) => { setC(c, true); }) }, icon('drop', 16)));
     pop.append(row);
     const rec = prefs.get('recent', []);
     if (rec.length) pop.append(h('div', { class: 'swatches small' }, h('span', { class: 'rl' }, 'Recent'), rec.map((c) => h('button', { class: 'sw', style: `background:${c}`, 'aria-label': c, onclick: () => { setC(c); paint(); } }))));
@@ -3770,9 +4637,9 @@ function openPop(kind) {
     pop.append(h('div', { class: 'sizeprev' }, eraserPrev),
       h('button', { class: 'btn small danger wide', onclick: () => {
         const pg = S.doc.pages[isInf(S.doc) ? 0 : S.curPage || 0];
-        const list = [...pg.strokes, ...pg.items].map((o) => ({ pg, o }));
+        const list = [...pg.strokes, ...pg.items].filter((o) => editL(pg, o)).map((o) => ({ pg, o }));
         if (!list.length) return toast('This page is already clear');
-        closePop(); actRemoveObjs(list); toast('Page cleared. Undo brings it back.');
+        closePop(); actRemoveObjs(list); toast(pg.layers && pg.layers.length > 1 ? 'Layer cleared. Undo brings it back.' : 'Page cleared. Undo brings it back.');
       } }, icon('trash', 16), 'Clear page'));
   } else redraw();
 }
@@ -4117,7 +4984,7 @@ function editorScale(k) { if (!editor) return; editor.it.s = Math.round(clamp(ed
 
 /* ---- more menu ---- */
 let menuOpen = false;
-function closeMenu() { $('#menu').hidden = true; menuOpen = false; }
+function closeMenu() { $('#menu').hidden = true; menuOpen = false; closeMenu2(); }
 function syncMenu() { if (menuOpen) openMenu(); }
 function exitPresent() {
   if (!document.body.classList.contains('present')) return;
@@ -4135,29 +5002,54 @@ function startPresent() {
   bar.innerHTML = ''; bar.append(h('button', { class: 'ex', onclick: exitPresent }, 'Exit presentation'));
   toast('Presenting. Draw to point things out.', 1800);
 }
-function openMenu() {
+function menuCats() {
+  const d = S.doc, paged = !isInf(d), pdfDoc = d.type === 'pdf', lm = byId(d.id), pg = d.pages[S.curPage || 0] || {};
+  const it = (ic, label, fn, o = {}) => ({ ic, label, fn, ...o });
+  const note = [
+    it('search', 'Find', () => openFind('')), it('tag', 'Tags', linksDialog), it('share', 'Share', shareDialog),
+    it('pin', lm && lm.pinned ? 'Unpin' : 'Pin', () => pinNote(d.id), { on: !!(lm && lm.pinned) }),
+    it('lock', lm && lm.locked ? 'Unlock' : 'Lock', () => setLocked(d.id, !(lm && lm.locked)), { on: !!(lm && lm.locked) }),
+    wgAvail() && !(lm && lm.locked) ? it('image', 'Widget', () => setWidget(d.id, !(lm && lm.widget)), { on: !!(lm && lm.widget), tip: 'Show on home widget' }) : null,
+    S.pdf ? it('pages', 'Contents', contentsDialog) : null,
+    it('clock', 'Remind', () => reminderDialog(d.id), { tip: 'Remind me' }),
+    it('clock', S.timer ? 'Timer on' : 'Timer', timerDialog, { on: !!S.timer }),
+    it('mic', S.rec ? 'Stop rec' : 'Record', () => (S.rec ? stopRecWrite() : startRecWrite()), { on: !!S.rec, tip: 'Record while writing' }),
+    it('fit', 'Extract', extractStart, { tip: 'Extract part of page' }),
+  ];
+  const page = [
+    it('layers', 'Layers', layersPanel),
+    paged ? it('bookmark', 'Bookmark', () => toggleBookmark(S.curPage || 0), { on: !!pg.bm }) : null,
+    paged ? it('plus', 'Add page', () => { const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); }) : null,
+    !pdfDoc ? it('pages', 'Template', templatesDialog, { tip: paged ? 'Add template page' : 'Board template' }) : null,
+    !pdfDoc ? it('paper', d.type === 'whiteboard' ? 'Backdrop' : 'Paper', paperDialog) : null,
+    !pdfDoc ? it('bookmark', 'Save as template', saveTemplateFromPage) : null,
+    paged && d.pages.length > 1 ? it('trash', 'Delete page', async () => { const i = S.curPage || 0; if (await confirmDlg('Delete page ' + (i + 1) + '?', 'You can undo this right after.')) removePageAt(i); }, { danger: true }) : null,
+  ];
+  const view = [
+    it('fit', 'Fit', () => { const t = {}; const keep = { ...S.view }; fitView(); Object.assign(t, S.view); S.view = keep; animateView(t, 280); }, { tip: 'Fit to screen' }),
+    it('present', 'Present', startPresent),
+    it('focus', 'Focus', () => { document.body.classList.add('focus'); setTimeout(resize, 30); toast('Tap the corner button to leave focus mode', 2200); }),
+    it('palm', 'Pen only', () => { S.stylusOnly = !S.stylusOnly; S.stylusUserSet = true; prefs.set('stylusOnly', S.stylusOnly); prefs.set('stylusUserSet', true); toast(S.stylusOnly ? 'Finger is for moving only' : 'Finger can draw too', 1600); }, { keep: true, on: !!S.stylusOnly, tip: 'Stylus only' }),
+    it('move', 'Centre tools', recenterUI, { tip: 'Put the toolbar back in the middle' }),
+    it('list', 'Note bar', () => settingsTabOpen('bar'), { tip: 'Choose what is on the top bar' }),
+  ];
+  return [{ id: 'note', name: 'Note', ic: 'book', col: '#3b5bdb', items: note.filter(Boolean) }, { id: 'page', name: 'Page', ic: 'pages', col: '#f76707', items: page.filter(Boolean) }, { id: 'view', name: 'View', ic: 'focus', col: '#2f9e44', items: view.filter(Boolean) }];
+}
+function closeMenu2() { const m = $('#menu2'); if (m) m.remove(); }
+function openMenu(open) {
   const m = $('#menu'); m.innerHTML = ''; m.hidden = false; menuOpen = true;
-  const d = S.doc, paged = !isInf(d), pdfDoc = d.type === 'pdf';
-  const item = (ic, label, fn, opts = {}) => m.append(h('button', { class: 'mi' + (opts.danger ? ' danger' : ''), onclick: () => { if (!opts.keep) closeMenu(); fn(); } },
-    h('span', { class: 'ico' }, icon(ic, 22)), label, opts.val ? h('span', { class: 'val' }, opts.val) : null));
-  const head = (t) => m.append(h('div', { class: 'mhead' }, t));
-  head('Note');
-  item('search', 'Find in note', () => openFind(''));
-  item('tag', 'Tags and links', linksDialog);
-  item('share', 'Share…', shareDialog);
-  head('Page');
-  if (paged) item('plus', 'Add blank page', () => { const i = S.curPage || 0; addPageAt(i + 1, blankPageLike(i)); scrollToPage(i + 1); });
-  if (!pdfDoc) item('pages', paged ? 'Add template page…' : 'Board template…', templatesDialog);
-  if (!pdfDoc) item('paper', d.type === 'whiteboard' ? 'Background' : 'Paper style', paperDialog);
-  if (!pdfDoc) item('bookmark', 'Save page as template', saveTemplateFromPage);
-  if (paged && d.pages.length > 1) item('trash', 'Delete this page', async () => { const i = S.curPage || 0; if (await confirmDlg('Delete page ' + (i + 1) + '?', 'You can undo this right after.')) removePageAt(i); }, { danger: true });
-  head('View');
-  item('fit', 'Fit to screen', () => { const t = {}; const keep = { ...S.view }; fitView(); Object.assign(t, S.view); S.view = keep; animateView(t, 280); });
-  item('present', 'Present', startPresent);
-  item('focus', 'Focus mode', () => { document.body.classList.add('focus'); setTimeout(resize, 30); toast('Tap the corner button to leave focus mode', 2200); });
-  head('Pen and touch');
-  item('palm', 'Stylus only', () => { S.stylusOnly = !S.stylusOnly; S.stylusUserSet = true; prefs.set('stylusOnly', S.stylusOnly); prefs.set('stylusUserSet', true); openMenu(); toast(S.stylusOnly ? 'Fingers pan and zoom, stylus draws' : 'Fingers can draw too'); }, { keep: true, val: S.stylusOnly ? 'On' : 'Off' });
-  item('settings', 'Gestures and pen', settingsDialog);
+  const cats = menuCats(); open = open || (m._open && cats.some((c) => c.id === m._open) ? m._open : null); m._open = open;
+  m.append(h('button', { class: 'mset', type: 'button', onclick: () => { closeMenu(); settingsDialog(); } }, icon('settings', 22), h('span', {}, 'Settings')));
+  cats.forEach((c) => m.append(h('button', { class: 'mfold' + (open === c.id ? ' on' : ''), type: 'button', 'data-cat': c.id, style: `--fc:${c.col}`, onclick: () => (m._open === c.id ? (m._open = null, closeMenu2(), openMenu()) : openMenu(c.id)) },
+    h('span', { class: 'fic' }, icon(c.ic, 22)), h('b', {}, c.name), h('small', {}, c.items.length + ' options'), h('span', { class: 'chev' }, '›'))));
+  closeMenu2();
+  const c = cats.find((x) => x.id === open); if (!c) return;
+  const sub = h('div', { id: 'menu2', class: 'menu menu2', style: `--fc:${c.col}` }, h('div', { class: 'm2head' }, h('span', { class: 'fic' }, icon(c.ic, 18)), h('b', {}, c.name),
+    h('button', { class: 'ib sm', type: 'button', 'aria-label': 'Close', onclick: () => { m._open = null; closeMenu2(); openMenu(); } }, icon('x', 18))));
+  const grid = h('div', { class: 'm2grid' });
+  c.items.forEach((o) => grid.append(h('button', { class: 'mi tile' + (o.danger ? ' danger' : '') + (o.on ? ' on' : ''), type: 'button', title: o.tip || o.label, onclick: () => { if (!o.keep) closeMenu(); o.fn(); if (o.keep) openMenu(c.id); } },
+    h('span', { class: 'ico' }, icon(o.ic, 22)), h('span', { class: 'lb' }, o.label))));
+  sub.append(grid); document.body.append(sub);
 }
 async function linksDialog() {
   const d = S.doc, meta = (await db.getMeta(d.id)) || { id: d.id, title: d.title };
@@ -4314,7 +5206,7 @@ function toolbarRows(repaint) {
   const list = h('div', { class: 'tblist' }, order.map((k, i) => {
     const on = !t.hidden.includes(k), label = toolLabel(k);
     const mv = (d) => { const o = order.slice(); [o[i], o[i + d]] = [o[i + d], o[i]]; t.order = o; commit2(); };
-    return h('div', { class: 'tbrow' + (on ? '' : ' off') }, h('span', { class: 'tbi' }, icon(k, 20)), h('span', { class: 'tbl' }, label),
+    return h('div', { class: 'tbrow' + (on ? '' : ' off') }, h('span', { class: 'tbi' }, icon(k === 'pen' ? S.penType : k, 20)), h('span', { class: 'tbl' }, label),
       h('button', { class: 'seg', type: 'button', disabled: i === 0, 'aria-label': 'Move ' + label + ' earlier', onclick: () => mv(-1) }, '↑'),
       h('button', { class: 'seg', type: 'button', disabled: i === order.length - 1, 'aria-label': 'Move ' + label + ' later', onclick: () => mv(1) }, '↓'),
       h('button', { class: 'seg' + (on ? ' on' : ''), type: 'button', 'aria-label': (on ? 'Hide ' : 'Show ') + label, onclick: () => { if (on && order.filter((q) => !t.hidden.includes(q)).length <= 1) return toast('Keep at least one tool'); t.hidden = on ? [...t.hidden, k] : t.hidden.filter((q) => q !== k); commit2(); } }, on ? 'Shown' : 'Hidden'));
@@ -4322,9 +5214,22 @@ function toolbarRows(repaint) {
   return [
     seg('Toolbar size', 'Auto switches to compact on small screens', [['auto', 'Auto'], ['normal', 'Normal'], ['compact', 'Compact']], () => t.size, (v) => (t.size = v)),
     seg('Move the toolbar', 'Hold the toolbar for a moment, then drag it anywhere. Drop it near a side to stand it up.', [[false, 'Fixed'], [true, 'Hold and drag']], () => t.drag, (v) => { t.drag = v; if (!v) t.pos = null; }),
-    t.drag && t.pos ? h('div', { class: 'srow' }, h('button', { class: 'btn small', onclick: () => { t.pos = null; commit2(); } }, 'Put the toolbar back')) : null,
+    h('div', { class: 'srow' }, h('button', { class: 'btn small', onclick: () => { t.pos = null; commit2(); recenterUI(); } }, 'Centre the toolbar')),
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Tools on the toolbar', h('small', {}, 'Hide what you never use and put your favourites first.')), list),
   ].filter(Boolean);
+}
+
+function barRows(repaint) {
+  const b = barPrefs(), on = b.order, off = BAR_ACTIONS.map((a) => a[0]).filter((k) => !on.includes(k));
+  const info = (k) => BAR_ACTIONS.find((a) => a[0] === k);
+  const commit = () => { barSave(b); buildTopbar(); repaint(); };
+  const row = (k, i, shown) => { const a = info(k);
+    return h('div', { class: 'tbrow' + (shown ? '' : ' off') }, h('span', { class: 'tbi' }, icon(a[2], 20)), h('span', { class: 'tbl' }, a[1]),
+      shown ? h('button', { class: 'seg', type: 'button', disabled: i === 0, 'aria-label': 'Move ' + a[1] + ' earlier', onclick: () => { [on[i], on[i - 1]] = [on[i - 1], on[i]]; commit(); } }, '↑') : null,
+      shown ? h('button', { class: 'seg', type: 'button', disabled: i === on.length - 1, 'aria-label': 'Move ' + a[1] + ' later', onclick: () => { [on[i], on[i + 1]] = [on[i + 1], on[i]]; commit(); } }, '↓') : null,
+      h('button', { class: 'seg' + (shown ? ' on' : ''), type: 'button', 'aria-label': (shown ? 'Hide ' : 'Show ') + a[1], onclick: () => { if (shown) on.splice(i, 1); else on.push(k); commit(); } }, shown ? 'On' : 'Off')); };
+  return [h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Top bar', h('small', {}, 'Pick what shows next to the note name. ⋯ is always there.')), h('div', { class: 'tblist' }, on.map((k, i) => row(k, i, true)), off.map((k) => row(k, -1, false)))),
+    h('div', { class: 'srow' }, h('button', { class: 'btn small', onclick: () => { b.order = [...BAR_DEFAULT]; barSave(b); buildTopbar(); repaint(); } }, 'Reset to default'))];
 }
 function searchPane(repaint) {
   const seg = (label, hint, opts, get, set) => h('div', { class: 'srow' }, h('div', { class: 'slabel' }, label, hint ? h('small', {}, hint) : null),
@@ -4339,6 +5244,7 @@ function searchPane(repaint) {
   return [
     seg('Read handwriting and pictures', ocr.ocrSupported() ? 'Makes ink and text inside photos searchable. Runs in the background only while you are not writing. Typed text and PDF text are always searchable.' : 'This browser cannot run the text reader. Typed text and PDF text are still searchable.',
       [['auto', 'Automatic'], ['off', 'Off']], () => prefs.get('ocr', 'auto'), (v) => { prefs.set('ocr', v); if (v !== 'off') Indexer.scanAll(L.metas); }),
+    seg('Reading indicator', 'The small badge shown while handwriting is being read', [['quiet', 'Quiet dot'], ['full', 'With text'], ['off', 'Hidden']], () => prefs.get('readChip', 'quiet'), (v) => { prefs.set('readChip', v); updateReadChip(); }),
     st,
     (() => {
       const out = h('small', {}, Indexer.status.err ? 'Last problem: ' + Indexer.status.err : 'Reads a picture of known words and shows what it got, and how long it took.');
@@ -4360,6 +5266,11 @@ function backupPane(repaint) {
   const pick = h('input', { type: 'file', style: 'display:none', accept: '.anota,application/octet-stream,*/*', onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { $('#dlg').close(); setTimeout(() => restoreFlow(f), 80); } } });
   const act = (label, ic, fn, primary) => h('button', { class: 'btn' + (primary ? ' primary' : ''), onclick: fn }, icon(ic, 18), label);
   return [
+    ...syncPaneRows(repaint),
+    h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Storage cleanup', h('small', {}, prefs.get('lastClean', 0) ? 'Last tidy: ' + new Date(prefs.get('lastClean', 0)).toLocaleDateString() : 'Removes pictures, recordings and files no note uses')),
+      h('div', { class: 'segs mini' }, h('button', { class: 'seg', type: 'button', onclick: async (e) => { e.currentTarget.textContent = 'Tidying…'; try { const r = await cleanupStorage(true); toast(r && r.files ? 'Freed ' + fmtMB(r.freed) + ' (' + r.files + ' unused file' + (r.files === 1 ? '' : 's') + ')' : 'Nothing to clean up. Storage is tidy.', 3600); } catch (err) { toast('Cleanup failed: ' + ((err && err.message) || err), 4000); } repaint(); } }, 'Clean up now'),
+        h('button', { class: 'seg' + (prefs.get('autoClean', true) ? ' on' : ''), type: 'button', onclick: () => { prefs.set('autoClean', !prefs.get('autoClean', true)); repaint(); } }, prefs.get('autoClean', true) ? 'Auto: weekly' : 'Auto: off'))),
+    ...abPaneRows(repaint),
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Last backup', h('small', {}, last ? new Date(last).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Never. Your notes live only on this device.')), h('div', {})),
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Storage', box), h('div', {})),
     h('div', { class: 'bkbtns' },
@@ -4376,17 +5287,17 @@ function settingsDialog() {
   const row = (label, hint, opts, get, set) => h('div', { class: 'srow' },
     h('div', { class: 'slabel' }, label, hint ? h('small', {}, hint) : null),
     h('div', { class: 'segs mini' }, opts.map(([v, l]) => h('button', { class: 'seg' + (get() === v ? ' on' : ''), onclick: () => { set(v); save(); paint(); } }, l))));
-  const TABS = [['look', 'Look', 'paper'], ['toolbar', 'Toolbar', 'grip'], ['pen', 'S Pen', 'ball'], ['draw', 'Drawing', 'shape'], ['touch', 'Touch', 'hand'], ['search', 'Search', 'search'], ['backup', 'Backup', 'shield'], ['about', 'About', 'book']];
+  const TABS = [['look', 'Look', 'paper'], ['toolbar', 'Toolbar', 'grip'], ['bar', 'Note bar', 'list'], ['pen', 'S Pen', 'ball'], ['draw', 'Drawing', 'shape'], ['touch', 'Touch', 'hand'], ['search', 'Search', 'search'], ['backup', 'Backup', 'shield'], ['lock', 'Lock', 'lock'], ['about', 'About', 'book']];
   const curStyle = () => document.documentElement.dataset.style;
   const panes = {
     look: () => [
       h('div', { class: 'stylecards' }, STYLES.map(([id, label]) => h('button', { class: 'scard' + (curStyle() === id ? ' on' : ''), onclick: () => { prefs.set('style', id); applyStyle(id); requestFrame(true); paint(); } },
-        h('span', { class: 'sprev ' + (COLOUR_THEMES.has(id) ? 'custom' : id), style: COLOUR_THEMES.has(id) ? customPreview(id) : '' }, h('i'), h('i'), h('i')), label,
-        h('small', {}, { glass: 'Frosted and airy', clay: 'Soft and puffy', og: 'The original', midnight: 'Deep and calm', paper: 'Warm and inky', custom: 'Your own colours' }[id])))),
+        h('span', { class: 'sprev ' + (COLOUR_THEMES.has(id) ? 'custom' : id), style: COLOUR_THEMES.has(id) ? customPreview(id) : '' }, h('i'), h('i'), h('i')), label))),
       ...(curStyle() === 'custom' ? [customRow(paint)] : []),
     ],
     toolbar: () => [
       ...toolbarRows(paint)],
+    bar: () => barRows(paint),
     touch: () => [
       row('Two-finger tap', 'Tap the page with two fingers', [['undo', 'Undo'], ['redo', 'Redo'], ['none', 'Off']], () => S.gest.two, (v) => (S.gest.two = v)),
       row('Three-finger tap', 'Tap the page with three fingers', [['redo', 'Redo'], ['undo', 'Undo'], ['none', 'Off']], () => S.gest.three, (v) => (S.gest.three = v)),
@@ -4413,7 +5324,12 @@ function settingsDialog() {
       row('Hold on a closed loop', 'Choose what happens when you pause after circling something', [['shape', 'Perfect shape'], ['select', 'Select inside']], () => S.loopSel, (v) => { S.loopSel = v; prefs.set('loopSel', v); })],
     search: () => searchPane(paint),
     backup: () => backupPane(paint),
-    about: () => [h('p', { class: 'note' }, 'Anota ' + APP_VERSION), h('p', { class: 'note' }, 'Everything is stored on this device. Notes work offline.')],
+    lock: () => lockPane(paint),
+    about: () => {
+      const out = h('pre', { class: 'note', style: 'white-space:pre-wrap;user-select:text' }, 'Not checked yet.');
+      const b = h('button', { class: 'btn', onclick: async () => { out.textContent = 'Checking...'; try { out.textContent = (await nativeDiag()).join('\n'); } catch (e) { out.textContent = 'Error: ' + (e && e.message || e); } } }, 'Check handwriting reader');
+      return [h('p', { class: 'note' }, 'Anota ' + APP_VERSION), h('p', { class: 'note' }, 'Everything is stored on this device. Notes work offline.'), b, out];
+    },
   };
   const paint = () => {
     body.innerHTML = '';
@@ -4562,6 +5478,8 @@ async function openSheet() {
 function wire() {
   $('#btnBack').append(icon('sidebar')); $('#btnShare').append(icon('share')); $('#btnUndo').append(icon('undo')); $('#btnRedo').append(icon('redo'));
   $('#btnPages').append(icon('pages')); $('#btnMore').append(icon('more'));
+  $('#btnLayers').append(icon('layers')); $('#btnFind').append(icon('search')); $('#btnMark').append(icon('bookmark')); $('#btnRec').append(icon('mic'));
+  $('#btnLayers').onclick = layersPanel; buildTopbar(); $('#btnFind').onclick = () => openFind(''); $('#btnMark').onclick = () => { if (!isInf(S.doc)) { toggleBookmark(S.curPage || 0); syncTopbar(); } }; $('#btnRec').onclick = () => (S.rec ? stopRecWrite() : startRecWrite());
   document.title = 'Anota'; wireMinimap(); wireDockDrag();
   $('#fab').append(icon('plus', 30, 2.4)); $('#searchIcon').append(icon('search', 20));
   $('#emptyArt').append(icon('ball', 52, 1.6)); $('#btnSettings').append(icon('settings', 22));
@@ -4621,7 +5539,7 @@ function wire() {
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) exitPresent(); });
   window.addEventListener('popstate', exitPresent);
-  window.addEventListener('storage', (e) => { if (e.key === 'inknote.prefs') { prefs.reload(); applyStyle(prefs.get('style', 'glass')); if (S.doc) { buildDock(); } S.penCal = Object.assign({ ax: 1, bx: 0, ay: 1, by: 0 }, prefs.get('penCal', {})); requestFrame(true); } });
+  window.addEventListener('storage', (e) => { if (e.key === 'inknote.prefs') { prefs.reload(); applyStyle(prefs.get('style', 'studio')); if (S.doc) { buildDock(); } S.penCal = Object.assign({ ax: 1, bx: 0, ay: 1, by: 0 }, prefs.get('penCal', {})); requestFrame(true); } });
   window.addEventListener('popstate', () => {
     if (PANE) return;
     if (S.tab) switchTo(null);
@@ -4634,7 +5552,7 @@ function wire() {
   window.addEventListener('click', (e) => {
     const path = e.composedPath ? e.composedPath() : [], inside = (sel) => path.some((n) => n.matches && n.matches(sel)) || (e.target.closest && e.target.closest(sel));
     if (popOpen && !inside('#pop,#dock,#selbar')) closePop();      // composedPath: a button that re-rendered its own panel is no longer "inside" afterwards
-    if (menuOpen && !inside('#menu,#btnMore')) closeMenu();
+    if (menuOpen && !inside('#menu,#menu2,#btnMore')) closeMenu();
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => requestFrame(true));
 }
@@ -4667,13 +5585,26 @@ let chipT = 0, chipLast = '';
 function updateReadChip() {
   let c = $('#readchip');
   if (!c) { c = h('button', { id: 'readchip', class: 'readchip', hidden: true, onclick: () => { settingsTabOpen('search'); } }); ($('#main') || document.body).append(c); }
-  const st = Indexer.status, mine = S.doc && Indexer.curId === S.doc.id && Indexer.running;
+  const st = Indexer.status, home = !S.doc, mine = S.doc && Indexer.curId === S.doc.id && Indexer.running;
+  c.classList.toggle('athome', home);                                      // on the Home screen the chip sits at the bottom left; in a note it sits under the note name
+  try {
+    if (home) { c.style.top = ''; }
+    else { const tb = $('.topbar'), mr = ($('#main') || document.body).getBoundingClientRect(); c.style.top = Math.max(0, tb.getBoundingClientRect().bottom - mr.top + 8) + 'px'; }
+  } catch {}
   clearTimeout(chipT);
-  if (S.doc && st.err && ocrOn()) { c.hidden = false; c.className = 'readchip bad'; c.replaceChildren(icon('x', 14), h('span', {}, 'Reader problem. Tap for details')); return; }
-  if (mine) { c.hidden = false; c.className = 'readchip busy'; c.replaceChildren(h('i', { class: 'spin' }), h('span', {}, 'Reading handwriting' + (st.page ? ' · ' + st.page.split(' ').pop() : '') + '…')); chipLast = 'busy'; return; }
-  if (chipLast === 'busy' && S.doc) { chipLast = ''; c.hidden = false; c.className = 'readchip ok'; c.replaceChildren(icon('search', 14), h('span', {}, 'Searchable')); chipT = setTimeout(() => { c.hidden = true; }, 2200); return; }
+  const mode = prefs.get('readChip', 'quiet');
+  if (mode === 'off') { c.hidden = true; return; }
+  const quiet = mode === 'quiet', cls = (k) => 'readchip ' + k + (home ? ' athome' : '') + (quiet ? ' quiet' : '');
+  if (st.err && ocrOn() && (S.doc || Indexer.running)) { c.hidden = false; c.className = cls('bad'); c.title = 'Reader problem. Tap for details'; c.replaceChildren(icon('x', 14), quiet ? null : h('span', {}, 'Reader problem. Tap for details')); return; }
+  if (mine || (home && Indexer.running && ocrOn())) {
+    const name = home && Indexer.curId ? (L.metas.find((m) => m.id === Indexer.curId) || {}).title : '';
+    c.hidden = false; c.className = cls('busy'); const msg = 'Reading handwriting' + (name ? ' · ' + name : st.page ? ' · ' + st.page.split(' ').pop() : '') + '…'; c.title = msg; c.replaceChildren(h('i', { class: 'spin' }), quiet ? null : h('span', {}, msg)); chipLast = 'busy'; return;
+  }
+  if (chipLast === 'busy' && quiet) { chipLast = ''; c.hidden = true; return; }
+  if (chipLast === 'busy') { chipLast = ''; c.hidden = false; c.className = cls('ok'); c.replaceChildren(icon('search', 14), h('span', {}, 'Searchable')); chipT = setTimeout(() => { c.hidden = true; }, 2200); return; }
   c.hidden = true;
 }
+function recenterUI() { const t = tbPrefs(); t.pos = null; tbSave(t); applyDockPos(); const d = $('#dock'); if (d) { d.classList.remove('moved'); d.style.left = d.style.top = d.style.bottom = d.style.transform = ''; } try { applyDockPos(); } catch {} toast('Toolbar centred', 1400); }
 function settingsTabOpen(tab) { setTab = tab; settingsDialog(); }
 function startIndexer() {
   if (PANE) return;
@@ -4689,6 +5620,76 @@ function startIndexer() {
    PDF text: find, select, copy, highlight. Page text is read lazily, one page at a time,
    only for pages you touch (or while a search is running), never for the whole file up front.
    ===================================================================== */
+
+/* ---- PDF links and contents: tap a chapter in the contents page (or any link inside the PDF) to jump there ---- */
+function pdfPageLinks(T, idx) {
+  T.pdfLinkP ||= new Map(); T.pdfLinkArr ||= new Map();
+  if (T.pdfLinkP.has(idx)) return T.pdfLinkP.get(idx);
+  const p = (async () => {
+    const page = await T.pdf.getPage(idx + 1), v0 = page.getViewport({ scale: 1 }), sc = PW / v0.width, out = [];
+    for (const a of await page.getAnnotations({ intent: 'display' })) {
+      if (a.subtype !== 'Link' || !a.rect || (a.annotationFlags & 2)) continue;
+      const url = a.url || a.unsafeUrl || null, dest = a.dest != null ? a.dest : null;
+      if (!url && dest == null) continue;
+      const [x1, y1] = v0.convertToViewportPoint(a.rect[0], a.rect[1]), [x2, y2] = v0.convertToViewportPoint(a.rect[2], a.rect[3]);
+      out.push({ x: Math.min(x1, x2) * sc, y: Math.min(y1, y2) * sc, w: Math.abs(x2 - x1) * sc, h: Math.abs(y2 - y1) * sc, url, dest });
+    }
+    page.cleanup(); T.pdfLinkArr.set(idx, out); return out;
+  })().catch((e) => { console.warn('pdf links', e); T.pdfLinkArr.set(idx, []); return []; });
+  T.pdfLinkP.set(idx, p); return p;
+}
+/** the link under a point on a PDF page, from links already read (null while they are still loading) */
+function pdfLinkAt(wx, wy) {
+  const T = S.tab; if (!S.pdf || !S.doc || !T || !T.pdfLinkArr || isInf(S.doc)) return null;
+  const pi = pageAt(wy), pg = S.doc.pages[pi]; if (!pg || pg.pdf == null) return null;
+  const x = wx, y = wy - S.layout.ys[pi], pad = 3;
+  for (const l of T.pdfLinkArr.get(pg.pdf) || []) if (x >= l.x - pad && x <= l.x + l.w + pad && y >= l.y - pad && y <= l.y + l.h + pad) return l;
+  return null;
+}
+/** turn a PDF destination (a name or an array) into a page number and, when it has one, a height on that page */
+async function pdfPlace(T, dest) {
+  try {
+    if (typeof dest === 'string') dest = await T.pdf.getDestination(dest);
+    if (!Array.isArray(dest) || dest[0] == null) return null;
+    const idx = typeof dest[0] === 'number' ? dest[0] : await T.pdf.getPageIndex(dest[0]), kind = dest[1] && dest[1].name;
+    let y = null;
+    const top = kind === 'XYZ' ? dest[3] : kind === 'FitH' || kind === 'FitBH' ? dest[2] : kind === 'FitR' ? dest[5] : null;
+    if (top != null && Number.isFinite(top)) {
+      const page = await T.pdf.getPage(idx + 1), v0 = page.getViewport({ scale: 1 }), [, vy] = v0.convertToViewportPoint(Number.isFinite(dest[2]) ? dest[2] : 0, top); page.cleanup();
+      y = vy * PW / v0.width;
+    }
+    return { page: S.doc.pages.findIndex((p) => p.pdf === idx), y };
+  } catch { return null; }
+}
+async function goPdfLink(l) {
+  const T = S.tab; if (!T) return;
+  if (l.url && l.dest == null) return openLink(l.url);
+  const pl = await pdfPlace(T, l.dest);
+  if (!pl || pl.page < 0) return toast('That link has no page to go to');
+  goPdfPlace(pl);
+}
+function goPdfPlace(pl) {
+  const i = clamp(pl.page, 0, S.doc.pages.length - 1);
+  if (pl.y != null && pl.y > 30) {
+    const keep = { ...S.view }; S.view.y = -(S.layout.ys[i] + pl.y - 36) * S.view.s; clampView(); const to = { ...S.view }; S.view = keep; animateView(to, 300);
+  } else scrollToPage(i);
+  buzz(10); toast('Page ' + (i + 1), 1200);
+}
+/** the PDF's own table of contents (bookmarks) as a list you can tap */
+async function contentsDialog() {
+  const T = S.tab; if (!T || !S.pdf) return;
+  let outline = null; try { outline = await T.pdf.getOutline(); } catch {}
+  const list = h('div', { class: 'toclist' });
+  const add = (items, depth) => { for (const it of items || []) {
+    list.append(h('button', { class: 'tocrow', style: 'padding-left:' + (10 + depth * 18) + 'px', onclick: async () => {
+      const pl = it.dest != null ? await pdfPlace(T, it.dest) : null;
+      if (pl && pl.page >= 0) { $('#dlg').close(); goPdfPlace(pl); } else if (it.url) openLink(it.url); else toast('That entry has no page');
+    } }, h('span', { class: 'toct' }, it.title || 'Untitled')));
+    if (depth < 5) add(it.items, depth + 1);
+  } };
+  add(outline, 0);
+  modal({ title: 'Contents', body: [outline && outline.length ? list : h('p', { class: 'note' }, 'This PDF has no contents list. If it has a contents page, tap an entry on that page to jump to the chapter.')], actions: [{ label: 'Close' }] });
+}
 function pdfPageWords(T, idx) {
   T.pdfText ||= new Map(); T.pdfWords ||= new Map();
   if (T.pdfText.has(idx)) return T.pdfText.get(idx);
@@ -4939,10 +5940,120 @@ async function runRestore(file, mode, withPrefs) {
   } catch (e) { close(); console.error(e); modal({ title: 'Restore failed', body: [h('p', {}, String(e.message || e)), h('p', { class: 'note' }, 'Some notes may already have been restored.')], actions: [{ label: 'Reload', kind: 'primary', fn: () => setTimeout(() => location.reload(), 60) }] }); }
 }
 
+
+/* ---- Android app: automatic backup into a folder you choose (it survives uninstalling) ---- */
+let abFolder = false, abDirty = false, abBusy = false, abT = 0, abLastRun = 0;
+function autoDirty() { if (!nbAvail() || PANE) return; abDirty = true; clearTimeout(abT); abT = setTimeout(() => autoRun(false), 25000); }
+async function autoRun(force) {
+  if (!nbAvail() || PANE || abBusy || !abFolder || (!abDirty && !force)) return;
+  if (!force && Date.now() - abLastRun < 90000) { clearTimeout(abT); abT = setTimeout(() => autoRun(false), 60000); return; }
+  abBusy = true; abDirty = false;
+  try {
+    if (saveTimer != null) await saveNow();
+    const { blob } = await exportAll({ prefsText: localStorage.getItem('inknote.prefs') || '' });
+    await nbWrite(blob);
+    abLastRun = Date.now(); prefs.set('lastAuto', abLastRun); prefs.set('autoErr', '');
+  } catch (e) { console.warn('auto backup', e); abDirty = true; prefs.set('autoErr', String((e && e.message) || e)); if (force) throw e; }
+  finally { abBusy = false; }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && abDirty) autoRun(false); });
+async function abPickFolder() {
+  try { await nbPick(); } catch (e) { return false; }
+  const i = await nbInfo(); abFolder = !!i.folder; if (!abFolder) return false;
+  const empty = (await db.listMeta()).length === 0;
+  if (i.has && empty) { const f = await nbRead(i.size); restoreFlow(f); return true; }
+  if (i.has) toast('Folder set. It already holds a backup, which will be replaced at the next auto-backup.', 4200);
+  try { await autoRun(true); toast('Backed up to “' + i.name + '”'); } catch (e) { toast('Backup failed: ' + ((e && e.message) || e), 4500); }
+  return true;
+}
+async function abBoot() {
+  if (!nbAvail() || PANE) return;
+  const i = await nbInfo(); abFolder = !!i.folder;
+  if (abFolder) { abDirty = true; abT = setTimeout(() => autoRun(false), 20000); return; }
+  if (Date.now() - prefs.get('abAsked', 0) < 3 * 864e5) return;
+  prefs.set('abAsked', Date.now());
+  setTimeout(() => modal({ title: 'Keep your notes safe', body: [h('p', {}, 'Choose a folder on this tablet (for example Documents, then a new folder called Anota). Anota will keep a backup file there automatically. It stays even if the app is removed.'), h('p', { class: 'note' }, 'If that folder already holds an Anota backup from before, you can restore your notes from it.')],
+    actions: [{ label: 'Not now' }, { label: 'Choose folder', kind: 'primary', fn: () => { setTimeout(abPickFolder, 60); } }] }), 1500);
+}
+/* ---- sync one file (Google Drive, or any folder another device can see) ---- */
+let syOn = false, syBusy = false, syDirtyF = false, syT = 0;
+function syncDirty() { if (!syOn || PANE) return; syDirtyF = true; clearTimeout(syT); syT = setTimeout(() => syncNow(false).catch(() => {}), 60000); }
+async function syncNow(manual) {
+  if (PANE || syBusy) return null;
+  const i = await syInfo(manual); if (!i.set) { syOn = false; return null; }
+  if (i.needsPerm) { if (manual) throw new Error('Allow access to the sync file'); return null; }
+  syBusy = true; const res = { pulled: 0, pushed: false };
+  try {
+    if (saveTimer != null) await saveNow();
+    if (i.size > 0 && (manual || i.modified !== prefs.get('syRemote', 0))) {
+      const out = await restore(await syRead(i.size), { mode: 'merge', prefs: false });
+      res.pulled = out.added + out.updated;
+      if (res.pulled) { await refreshLibrary(); renderTabs(); }
+    }
+    if (manual || syDirtyF || res.pulled || !(i.size > 0)) {
+      syDirtyF = false;
+      const { blob } = await exportAll({}); await syWrite(blob); res.pushed = true;
+      const j = await syInfo(); prefs.set('syRemote', j.modified || 0);
+    } else prefs.set('syRemote', i.modified || 0);
+    prefs.set('syLast', Date.now()); prefs.set('syErr', '');
+  } catch (e) { syDirtyF = true; prefs.set('syErr', String((e && e.message) || e)); throw e; }
+  finally { syBusy = false; }
+  return res;
+}
+async function syncBoot() {
+  if (PANE || !syAvail()) return;
+  try { const i = await syInfo(false); syOn = !!i.set; } catch { syOn = false; }
+  if (syOn) syncNow(false).catch((e) => console.warn('sync', e));
+  document.addEventListener('visibilitychange', () => { if (!syOn) return; if (document.visibilityState === 'hidden') { if (syDirtyF) syncNow(false).catch(() => {}); } else syncNow(false).catch(() => {}); });
+}
+function syncPaneRows(repaint) {
+  if (!syAvail()) return [];
+  const st = h('small', {}, 'Checking…');
+  syInfo(false).then((i) => {
+    syOn = !!i.set; const last = prefs.get('syLast', 0), err = prefs.get('syErr', '');
+    st.textContent = !i.set ? 'Not set up. Notes stay on this device only.' : '“' + i.name + '”' + (last ? ' · synced ' + new Date(last).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '') + (i.needsPerm ? ' · tap Sync now to allow access' : '') + (err ? ' · last problem: ' + err : '');
+  });
+  const act = (label, ic, fn, primary) => h('button', { class: 'btn' + (primary ? ' primary' : ''), onclick: fn }, icon(ic, 18), label);
+  const setup = (how) => async () => {
+    try { const i = await syPick(how); syOn = !!i.set; } catch (e) { return; }
+    toast('Syncing…'); try { const r = await syncNow(true); toast(r ? 'Synced' + (r.pulled ? ' · ' + r.pulled + ' note' + (r.pulled > 1 ? 's' : '') + ' updated' : '') : 'Synced'); } catch (e) { toast('Sync failed: ' + ((e && e.message) || e), 4500); }
+    repaint();
+  };
+  return [
+    h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Sync with Google Drive', st), h('div', {})),
+    h('div', { class: 'bkbtns' },
+      act('Create sync file', 'upload', setup('create'), true), act('Use existing file', 'upload', setup('open')),
+      act('Sync now', 'down', async () => { toast('Syncing…'); try { const r = await syncNow(true); toast(r ? 'Synced' + (r.pulled ? ' · ' + r.pulled + ' note' + (r.pulled > 1 ? 's' : '') + ' updated' : '') : 'Set up sync first'); } catch (e) { toast('Sync failed: ' + ((e && e.message) || e), 4500); } repaint(); }),
+      act('Stop', 'trash', async () => { await syForget(); syOn = false; toast('Sync stopped'); repaint(); })),
+    h('p', { class: 'note' }, 'In the file picker, open the menu and choose Google Drive, then pick or create “Anota-sync.anota”. On your second device choose “Use existing file” and pick that same file. Each note keeps the version edited last. Notes you delete for good on one device can come back from the other, so use the Trash. On a computer use the same file through the Google Drive desktop app folder.'),
+  ];
+}
+function abPaneRows(repaint) {
+  if (!nbAvail()) return [];
+  const st = h('small', {}, 'Checking…');
+  nbInfo().then((i) => {
+    abFolder = !!i.folder;
+    const last = prefs.get('lastAuto', 0), err = prefs.get('autoErr', '');
+    st.textContent = !i.folder ? 'No folder chosen yet. Your notes are only inside the app.' : '“' + i.name + '”' + (i.has ? ' · ' + fmtBytes(i.size) + ' · ' + new Date(i.modified).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ' · no backup yet') + (err ? ' · last attempt failed: ' + err : '');
+  });
+  const act = (label, ic, fn, primary) => h('button', { class: 'btn' + (primary ? ' primary' : ''), onclick: fn }, icon(ic, 18), label);
+  return [
+    h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Automatic backup folder', st), h('div', {})),
+    h('div', { class: 'bkbtns' },
+      act('Choose folder', 'shield', async () => { $('#dlg').close(); setTimeout(abPickFolder, 60); }, true),
+      act('Back up now', 'down', async () => { if (!abFolder) return toast('Choose a folder first'); toast('Backing up…'); try { await autoRun(true); toast('Backed up'); } catch (e) { toast('Backup failed: ' + ((e && e.message) || e), 4500); } repaint(); }),
+      act('Restore from folder', 'upload', async () => { const i = await nbInfo(); if (!i.has) return toast('No backup in that folder'); $('#dlg').close(); restoreFlow(await nbRead(i.size)); })),
+    h('p', { class: 'note' }, 'Anota saves a fresh backup about half a minute after you stop writing, and when you leave the app. If you reinstall, open this tab, choose the same folder, and restore.'),
+  ];
+}
+
 async function boot() {
-  wire();
+  wire(); wireLock();
+  if (!PANE && lk.hasPin() && lk.lockCfg().app) lk.gate({ title: 'Anota is locked', cancel: false, ...lockUI });
   await refreshLibrary();
   startIndexer();
+  abBoot(); syncBoot(); remBoot(); cleanupBoot(); consumeShared();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') consumeShared(); });
   renderTabs();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     try { await navigator.serviceWorker.register('sw.js'); } catch (e) { console.warn('SW', e); }
@@ -4957,7 +6068,8 @@ async function boot() {
         const name = decodeURIComponent(res.headers.get('x-name') || 'Shared PDF.pdf');
         await cache.delete('shared-file');
         history.replaceState(null, '', location.pathname);
-        await importDocument(new File([blob], name, { type: blob.type || 'application/pdf' }));
+        const fl = new File([blob], name, { type: blob.type || 'application/pdf' });
+        if (/^image\//.test(fl.type)) shareImages([fl]); else await importDocument(fl);
         return;
       }
     } catch (e) { console.warn(e); }
@@ -4977,4 +6089,11 @@ async function boot() {
 boot();
 
 // test hook
-window.__ink = { S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote, graphDialog, Indexer, ocr, openFind, findHits, exportAll, restore, inspect };
+window.__ink = { updateReadChip, recenterUI, moveIntoFolder, folderStyleDialog, eraseAt, editL, cleanupStorage, extractDialog, boardDialog, lassoSelect, layersDialog, eyedrop, bookmarksDialog, descendants, rebuildWidget, setWidget, shareImages, consumeShared, studyDialog, reminderDialog, timerDialog, startTimer, switchTo, openDoc, startRecWrite, stopRecWrite, playFrom, audioItems, settingsTabOpen, S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote, graphDialog, Indexer, ocr, openFind, findHits, exportAll, restore, inspect };
+
+function syncTopbar() {
+  if (!S.doc) return;
+  const bm = $('#btnMark'); if (bm) { const on = !isInf(S.doc) && !!(S.doc.pages[S.curPage || 0] || {}).bm; bm.classList.toggle('on', on); bm.hidden = isInf(S.doc); }
+  const r = $('#btnRec'); if (r) r.classList.toggle('on', !!S.rec);
+}
+setInterval(syncTopbar, 700);

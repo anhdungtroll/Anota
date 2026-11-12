@@ -80,7 +80,7 @@ export async function restore(file, { mode = 'merge', onProgress, prefs = true }
       const m = JSON.parse(await text(r)); skip = null; onProgress && onProgress(++n, m.title);
       const have = existing.get(m.id);
       if (have && (have.updated || 0) >= (m.updated || 0) && !have.trashed === !m.trashed && mode === 'merge') { skip = m.id; out.skipped++; continue; }
-      await db.putRaw('meta', null, m); have ? out.updated++ : out.added++;
+      await db.putRaw('meta', null, m); have ? out.updated++ : out.added++; (out.ids ||= []).push(m.id);
     } else if (h.t === 'doc') { if (skip === h.k) continue; await db.putRaw('docs', null, JSON.parse(await text(r))); }
     else if (h.t === 'pdf') { if (skip === h.k) continue; await db.putRaw('pdfs', h.k, await file.slice(r.start, r.end).arrayBuffer()); out.files++; }
     else if (h.t === 'asset') { if (mode === 'merge' && await db.getAsset(h.k)) continue; await db.putRaw('assets', h.k, file.slice(r.start, r.end, h.ct || '')); out.files++; }
@@ -88,6 +88,6 @@ export async function restore(file, { mode = 'merge', onProgress, prefs = true }
     else if (h.t === 'prefs') prefsText = await text(r);
   }
   if (prefs && prefsText) { try { localStorage.setItem('inknote.prefs', prefsText); } catch {} }
-  try { await db.clearIdx(); } catch {}                      // the search index is rebuilt from the restored notes
+  try { if (mode === 'replace') await db.clearIdx(); else for (const id of out.ids || []) await db.delIdx(id); } catch {}   // the search index is rebuilt for the notes that changed
   return out;
 }

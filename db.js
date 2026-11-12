@@ -46,6 +46,8 @@ export const db = {
     for (const x of assetIds) a.delete(x);
     m.delete(id); d.delete(id); return p.delete(id);
   }),
+  delAsset: (id) => run(['assets'], 'readwrite', (a) => a.delete(id)),
+  delPdf: (id) => run(['pdfs'], 'readwrite', (p) => p.delete(id)),
   removeMeta: (id) => run(['meta'], 'readwrite', (m) => m.delete(id)),
   // search index
   listIdx: () => run(['idx'], 'readonly', (x) => x.getAll()),

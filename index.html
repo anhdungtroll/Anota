@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: https:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#e9eefc">
 <meta name="application-name" content="Anota">
@@ -23,6 +24,7 @@
 
 <!-- ============ HOME / LIBRARY ============ -->
 <section id="library" class="screen">
+  <aside id="rail" class="rail" aria-label="Library"></aside>
   <header class="lib-head">
     <div class="brand"><img src="icons/icon-192.png" alt="" class="logo"><h1>Anota</h1></div>
     <label class="search"><span id="searchIcon"></span><input id="search" type="search" placeholder="Search notes" autocomplete="off"></label>
@@ -47,6 +49,10 @@
   <header class="topbar">
     <button id="btnBack" class="ib" aria-label="All notes" title="All notes"></button>
     <button id="docTitle" class="title" aria-label="Rename"></button>
+    <button id="btnFind" class="ib x2" aria-label="Find" title="Find"></button>
+    <button id="btnMark" class="ib x2" aria-label="Bookmark page" title="Bookmark page"></button>
+    <button id="btnRec" class="ib x2" aria-label="Record" title="Record while writing"></button>
+    <button id="btnLayers" class="ib" aria-label="Layers" title="Layers"></button>
     <button id="btnUndo" class="ib" aria-label="Undo"></button>
     <button id="btnRedo" class="ib" aria-label="Redo"></button>
     <button id="btnPages" class="ib" aria-label="Pages"></button>
@@ -79,7 +85,7 @@
 </div><!-- /main -->
 </div><!-- /wrap -->
 <dialog id="dlg"></dialog>
-<input type="file" id="file" accept="application/pdf,.pdf,.doc,.docx,.rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+<input type="file" id="file" accept="application/pdf,.pdf,.sdocx,.doc,.docx,.rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
 <input type="file" id="imgfile" accept="image/*" hidden>
 <input type="file" id="camfile" accept="image/*" capture="environment" hidden>
 

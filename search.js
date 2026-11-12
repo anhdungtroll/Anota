@@ -2,6 +2,7 @@
 // One index entry per note, kept in IndexedDB ('idx'). Matching ignores case and accents (so "viet" finds "Việt").
 import { db } from './db.js';
 import * as ocr from './ocr.js';
+import { nativeAvailable, recognizeNative } from './ink-native.js';
 
 export const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase();
 export const tokens = (q) => norm(q).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
@@ -252,6 +253,10 @@ async function readLine(line, pace, langs) {
   const lh0 = Math.max(8, line.y1 - line.y0), groups = glyphGroups(line, med);
   const isIso = (g) => (g.x1 - g.x0) <= 1.5 * lh0 && g.strokes.length <= 4 && !((g.y1 - g.y0) < 0.28 * lh0 && (g.x1 - g.x0) < 0.35 * lh0 && groups.length > 1);    // not a speck / comma
   const glyph = async (g) => {                                                       // read one isolated letter on its own, at the line's height so its case is kept
+    if (nativeAvailable()) {
+      const c = await recognizeNative(g.strokes, g.x1 - g.x0, line.y1 - line.y0);
+      if (c) { const w = [c[0], Math.round(g.x0), Math.round(g.y0), Math.round(g.x1 - g.x0), Math.round(g.y1 - g.y0)]; if (c.length > 1) w.push(c.slice(1, 5)); w.c = 95; return w; }
+    }
     const gp = 10, gx0 = g.x0 - gp, gy0 = line.y0 - gp, gw = g.x1 - g.x0 + 2 * gp, gh = line.y1 - line.y0 + 2 * gp, SC = Math.min(2.6, Math.max(0.3, 54 / Math.max(lh0, 10)));
     const rd = async (psm) => { await pace(); const res = await ocr.recognize(renderChunk(g.strokes, gx0, gy0, gw, gh, SC, { lw: TUNE.lw, minLw: TUNE.minLw }), { psm, wl: ALNUM }); return res.filter((r) => /^[A-Za-z0-9]$/.test(r.t) || r.t.length <= 3).sort((p, q) => q.c - p.c)[0] || null; };
     let r1 = await rd(10), r2 = r1 && r1.c >= 85 ? null : await rd(8);
@@ -273,6 +278,21 @@ async function readLine(line, pace, langs) {
     return out;
   }
   if (groups.length === 1 && iso.length === 1 && line.strokes.length <= 4) { const w = await glyph(iso[0]); if (w && w.c >= 60) return [w.slice(0, w.length)]; }   // one letter on its own
+  if (nativeAvailable()) {                                                          // Android app: Google ML Kit reads the strokes directly
+    const c = await recognizeNative(line.strokes, line.x1 - line.x0, line.y1 - line.y0);
+    if (c) {
+      const toWords = (txt) => txt.split(/\s+/).filter(Boolean), ws = toWords(c[0]), out = [], span = line.x1 - line.x0, tot = ws.reduce((a, t) => a + t.length + 1, 0) || 1;
+      let cx = line.x0;
+      ws.forEach((t, k) => {
+        let x, w, y = line.y0, h = line.y1 - line.y0;
+        if (groups.length === ws.length) { x = groups[k].x0; w = groups[k].x1 - groups[k].x0; y = groups[k].y0; h = groups[k].y1 - groups[k].y0; }
+        else { w = span * (t.length / tot); x = cx; cx += span * ((t.length + 1) / tot); }
+        const alts = c.slice(1).map((o) => toWords(o)).filter((o) => o.length === ws.length).map((o) => o[k]).filter((o) => o && o !== t);
+        const word = [t, Math.round(x), Math.round(y), Math.round(w), Math.round(h)]; if (alts.length) word.push([...new Set(alts)].slice(0, 4)); out.push(word);
+      });
+      if (out.length) return out;
+    }
+  }
   let best = await attempt(base, 7, undefined, useSh && TUNE.deslant === 'primary' ? shear : 0); const all = [best];
   if (useSh && TUNE.deslant === 'extra') { const d = await attempt(base, 7, undefined, shear); all.push(d); if (wscore(d) > wscore(best)) best = d; }
   if (/vie/.test(langs || '') && /eng/.test(langs || '')) { const v = await attempt(base, 7, 'vie'); all.push(v); if (wscore(v) > wscore(best) * 1.05) best = v; }      // a Vietnamese-only second opinion: it keeps the accents

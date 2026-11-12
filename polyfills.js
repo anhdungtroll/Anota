@@ -9,3 +9,11 @@ if (!Promise.try) Promise.try = function (fn, ...args) { return new Promise((res
 if (!Uint8Array.prototype.toHex) Object.defineProperty(Uint8Array.prototype, 'toHex', { configurable: true, writable: true, value() { return Array.from(this, (b) => b.toString(16).padStart(2, '0')).join(''); } });
 if (!Uint8Array.fromBase64) Uint8Array.fromBase64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 if (!Array.prototype.at) Object.defineProperty(Array.prototype, 'at', { configurable: true, writable: true, value(i) { return this[i < 0 ? this.length + i : i]; } });
+
+// DOM append/replaceChildren turn null into the text "null". Skip empty values instead.
+for (const [Cls, names] of [[Element, ['append', 'prepend', 'replaceChildren']], [DocumentFragment, ['append', 'prepend', 'replaceChildren']]]) {
+  for (const n of names) {
+    const orig = Cls.prototype[n]; if (!orig) continue;
+    Cls.prototype[n] = function (...a) { return orig.apply(this, a.flat().filter((x) => x != null && x !== false)); };
+  }
+}

@@ -62,6 +62,62 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.29
+- **⋯ menu:** Settings is one tap; everything else is in folders (Note, Page, View). Each folder opens its own small window.
+- **Note bar:** Settings › Note bar lets you turn actions on or off and reorder them (find, bookmark, record, layers, undo, redo, pages, share, timer, present, focus, pin, lock, add page, fit, ruler). Note name is centred on wide screens.
+- **Centre tools:** View folder, or Settings › Toolbar, puts the toolbar back in the middle.
+- **Reading dot on Home:** sits beside Settings and is solid.
+- **Moving notes:** hold a note or folder and drop it on a folder, a breadcrumb or Home; or use Select, tick several, then Move or Trash. Move list shows folder colours and has New folder.
+- **Folder colours:** ⋯ on a folder › Colour and icon. Breadcrumbs show the colour dot.
+
+## What's new in 3.28
+- **Home:** left rail (Home, Saved, Cards, Remind, Timer, Graph, Trash, Settings), compact cards with icon badges, smaller top row. The stray "null" text is gone.
+- **Note bar:** find, bookmark page, record, layers, undo, redo, pages, share, more. The ⋯ menu is a tile grid with short labels.
+- **Layers:** floating panel (stays open while you draw). Each layer can only select, erase or clear its own content.
+- **Timer:** drag it anywhere; pause, continue and stop buttons on the timer itself.
+- **Looks:** new Studio (default) and Graphite. Old Glass users are moved to Studio once; pick Glass again in Settings › Look.
+- Pen: lower-latency canvas and immediate redraw while inking.
+
+## What's new in 3.27
+
+- **Bookmarks:** Home > Bookmarks lists pinned notes and bookmarked pages from every note. The note menu can pin a note and bookmark the current page.
+- **Search in a folder:** inside a folder, searching looks in that folder only (chip on Home switches to everywhere).
+- **Quiet reading badge:** a tiny dot instead of a text box (Settings > Search > Reading indicator).
+- **Fingers still work in Pen only mode:** tap Add page, tap a picture to select it, drag a selection's handles.
+- **Eyedropper** in every colour picker: pick a colour from ink, pictures or PDFs.
+- **Ruler:** snaps every 15 degrees (30, 45, 60, 90) and shows the angle; each note keeps its own ruler.
+- **Layers** (menu > Layers): show, hide, lock, reorder, rename, move a selection to a layer. Hidden layers are left out of exports.
+- **Tape** (Highlighter > Style > Tape): an opaque strip that covers text; erase it to uncover.
+- **Whiteboard card** (Insert > Whiteboard): a live preview of a board inside a notebook page; tap to open.
+- **Extract part of page** (menu): drag a box over a PDF or page and send it to a new notebook, whiteboard or existing note.
+- **Storage cleanup:** removes pictures, recordings and files no note uses (Settings > Backup, also weekly).
+- Pen icon now shows in Settings > Toolbar.
+
+## What's new in 3.26
+
+- **Record while you write:** menu > Record while writing. Tap your handwriting later and the audio plays from that moment; words not yet spoken fade.
+- **Lock with PIN or fingerprint:** lock a note from its menu. Locked notes hide their thumbnail and search text. Settings > Lock also has an app lock and a re-lock timer. It is a privacy gate, not encryption.
+- **Handwriting to typed text:** select handwriting, tap To text, check it, then replace the ink or add the text below.
+- **Flashcards:** select a question, tap Flashcard, select the answer, tap Finish card. Study from Home > Cards (Again / Hard / Good / Easy).
+- **Reminders and a timer:** note menu > Remind me, and Home > Reminders / Timer. Notifications fire in the Android app even when it is closed.
+- **Drive sync:** Settings > Backup > Sync. Pick one file in Google Drive; every device merges it, keeping the version of each note edited last.
+- **Share to Anota (Android):** share pictures or PDFs from any app into a new or open note.
+- **Home-screen widget (Android):** a random picture from notes you allowed (note menu > Show on home widget). Locked notes are never shown. Tap the picture to jump to it.
+- New app icon.
+
+## What's new in 3.25
+- **PDF links and contents.** Tap a chapter on a PDF's contents page (or any link inside the PDF) and Anota jumps to that page. A quick tap with the pen or mouse works too and leaves no dot. Web links open in the browser. **Contents** in the ••• menu lists the PDF's own bookmarks.
+- **Samsung Notes backgrounds.** Page colour, ruled and dotted paper, a picture used as the page background, and notes made on an imported PDF (ink lands on the right PDF page) now come across.
+- **Reading chip.** Solid so it shows over notes. On the Home screen it sits at the bottom left while notes are being read; inside a note it stays under the note name.
+
+## What's new in 3.24
+- **Samsung Notes import.** Open a `.sdocx` file from Import (the same button as PDF). Pages come over in Samsung's order with pen strokes (pressure and colour kept) and pictures, as ink you can still edit. Not brought over yet: typed text, shapes, tables, page templates and the PDF behind a Samsung PDF note. The reader follows the community reverse-engineering of the format (twangodev/sdocx, GPL-3.0); it is read-only, Anota does not write `.sdocx`.
+
+## What's new in 3.23
+- **Faster drawing.** Pressure-sensitive pen strokes are drawn in far fewer steps: busy pages draw about 2.3 times faster.
+- **Safer.** A content security policy blocks anything but Anota's own code; links only open as web, mail or phone links (also ones that arrive in an imported backup); embedded videos are sandboxed. The Android app turns off Android's automatic app backup so notes only leave the tablet where you send them.
+- **Android app (3.21 to 3.22).** Google ML Kit reads handwriting; notes back up automatically to a folder you pick; the reading chip sits under the note name.
+
 ## What's new in 3.20
 - **Single letters.** Letters written one by one (an A-to-Z row, i and j side by side, w and x...) are now read one at a time at the line's height, so case is kept and neighbours are no longer glued together. i and l are told apart by the dot.
 - **Short searches** (one or two letters) only match a whole read word, so searching "a" no longer lights up every word containing an a.
