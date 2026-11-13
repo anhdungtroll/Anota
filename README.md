@@ -62,6 +62,22 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.32
+- ⋯ search is now universal: tools, insert items, settings pages, looks, flashcards, reminders, storage actions and every menu action. Ctrl+K opens it.
+- Whiteboards: the quick row shows Focus instead of Bookmark, and the top bar shows Focus instead of Bookmark and Add page.
+- Note bar: Undo/Redo on the left, name in the middle, actions on the right (Add page is now on by default).
+- Tabs grow wider (and a bit larger) when only one or two notes are open.
+- Keyboard: dialogs, menu and layers panel size to the visible area and scroll; the toolbar and + button hide while the keyboard is up.
+
+## What's new in 3.31
+- ⋯ menu always fits the screen (two columns, shrinks to the free height). The active tool square in the toolbar is centred.
+
+## What's new in 3.30
+- **⋯ menu:** now a small command palette. Search box and Settings at the top, five quick switches (Pin, Lock, Pen only, Record, Bookmark), then a plain list. Type to find any action.
+- **Smoother with big pages:** while you pan, zoom or glide, a heavy page is moved as a picture and redrawn sharp when you stop. A page with 2,500 strokes went from about 150 ms per frame to about 17 ms in my test.
+- **Smaller notes:** new handwriting drops points that do not change the line (0.2 px tolerance) and rounds the rest. Settings › Backup › Shrink handwriting does the same for old notes (notes that are open are skipped).
+- Faster drawing path from 3.28 stays.
+
 ## What's new in 3.29
 - **⋯ menu:** Settings is one tap; everything else is in folders (Note, Page, View). Each folder opens its own small window.
 - **Note bar:** Settings › Note bar lets you turn actions on or off and reorder them (find, bookmark, record, layers, undo, redo, pages, share, timer, present, focus, pin, lock, add page, fit, ruler). Note name is centred on wide screens.

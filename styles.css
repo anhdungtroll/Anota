@@ -916,3 +916,52 @@ html[data-style=studio] .chip.on,html[data-style=graphite] .chip.on{box-shadow:n
 .crumb{display:inline-flex;align-items:center}
 .dz span:empty{display:none}
 .topbar #btnMore{order:200!important}
+
+/* ---- ⋯ command-palette menu ---- */
+#menu.menu{width:min(310px,calc(100vw - 16px));display:flex;flex-direction:column;gap:6px;padding:8px;max-height:calc(100vh - var(--tabh) - 70px);overflow:hidden}
+#menu .mhd{display:flex;gap:6px;align-items:center}
+#menu .mqw{flex:1;display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:12px;background:var(--panel2);color:var(--muted)}
+#menu .mq{flex:1;min-width:0;border:0;background:none;outline:0;font:inherit;font-size:14px;color:var(--ink);user-select:text;-webkit-user-select:text}
+#menu .mset{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--panel2);color:var(--ink);padding:0;grid-template-columns:none}
+#menu .mquick{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+#menu .mi.qt{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0 6px;border-radius:12px;font-size:11px;font-weight:600;color:var(--muted);width:auto;text-align:center}
+#menu .mi.qt.on{background:var(--accent-soft);color:var(--accent)}
+#menu .mlist{overflow-y:auto;display:flex;flex-direction:column;gap:1px;min-height:0}
+#menu .mi.row{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:10px;font-weight:600;font-size:14px;background:none;min-height:0}
+#menu .mi.row .ico{color:var(--muted);display:grid}
+#menu .mi.row .lb{flex:1;text-align:left}
+#menu .mi.row small{color:var(--muted);font-weight:500;font-size:12px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#menu .mi.row:hover,#menu .mi.row:active{background:var(--panel2)}
+#menu .mi.row.on .ico,#menu .mi.row.on .lb{color:var(--accent)}
+#menu .mi.row .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+#menu .msep{border:0;border-top:1px solid var(--line);margin:4px 8px}
+#menu .mempty{padding:14px;text-align:center;color:var(--muted);font-size:13px}
+#menu .mset{flex:none}
+#menu .mqw{min-width:0}
+/* 3.31: active tool square sits exactly centred in the toolbar; menu fits any screen */
+.dock .tool.on{transform:none!important;animation:none}
+#menu.menu{width:min(440px,calc(100vw - 16px))}
+#menu .mlist{display:grid;grid-template-columns:1fr 1fr;column-gap:6px;align-content:start}
+#menu .mlist .msep,#menu .mlist .mempty{grid-column:1/-1}
+#menu .mi.row{padding:8px 8px;gap:10px}
+@media (max-width:460px){#menu .mlist{grid-template-columns:1fr}}
+
+/* ---- 3.32 ---- */
+.topbar::after{content:none}
+.topbar .title{order:5;flex:1 1 auto;min-width:0;text-align:left}
+.topbar #btnBack{order:0}
+@media (min-width:900px){.topbar .title{position:absolute;left:50%;transform:translateX(-50%);text-align:center;max-width:34vw;flex:none}.topbar::after{content:"";flex:1;order:6}}
+.topbar .ib{width:42px;height:42px}
+/* tabs grow when few notes are open */
+.tabscroll{flex:1 1 auto}
+.tabscroll .tab{flex:1 1 0;min-width:112px;max-width:300px}
+.tabscroll .tab .tlabel{flex:1;max-width:none;min-width:0}
+body[data-tabs="0"] .tab.home,body[data-tabs="1"] .tab.home,body[data-tabs="2"] .tab.home{width:56px;justify-content:center;padding:0}
+body[data-tabs="1"] .tab,body[data-tabs="2"] .tab{height:42px;font-size:15.5px}
+body[data-tabs="1"] .tabscroll .tab,body[data-tabs="2"] .tabscroll .tab{max-width:360px}
+body[data-tabs="1"] .tab .tx,body[data-tabs="2"] .tab .tx{width:30px;height:30px}
+/* keyboard: dialogs and panels size to the visible area and scroll */
+dialog{max-height:min(90vh,calc(var(--vvh,100vh) - 16px))}
+.layp{max-height:calc(var(--vvh,100vh) - var(--tabh,0px) - 70px)}
+body.kb .dock,body.kb .fab-wrap,body.kb .zoombar,body.kb .timerchip{display:none!important}
+body.kb dialog{margin-top:8px;align-self:flex-start}

@@ -199,7 +199,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.29';
+const APP_VERSION = '3.32';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['studio', 'Studio'], ['graphite', 'Graphite'], ['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { studio: { bg: '#eef0f4', ac: '#2f6df6' }, graphite: { bg: '#15171c', ac: '#8aa4ff' }, midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -773,6 +773,13 @@ function fitView() {
   if (isInf(S.doc)) S.view = { s: 1, x: vw / 2 - 400, y: vh / 2 - 300 };
   else S.view = { s: f, x: (vw - PW * f) / 2, y: 0 };
 }
+/* While the view is moving (pan, pinch, wheel, glide) a heavy page is not re-drawn stroke by stroke: the last picture is moved and scaled instead, and redrawn sharp a moment after the movement stops. */
+let vDirty = false, vTimer = 0, bView = null, lastRenderMs = 0;
+function viewMoved() {
+  vDirty = true;
+  clearTimeout(vTimer); vTimer = setTimeout(() => { baseDirty = true; requestFrame(); }, 140);
+  requestFrame();
+}
 function requestFrame(dirty) {
   if (dirty) baseDirty = true;
   if (frameQueued) return;
@@ -791,7 +798,7 @@ function stepViewAnim() {
   v.s = a.from.s + (a.to.s - a.from.s) * k; v.x = a.from.x + (a.to.x - a.from.x) * k; v.y = a.from.y + (a.to.y - a.from.y) * k;
   clampView();
   if (now() - a.t0 >= a.ms) S.viewAnim = null;
-  baseDirty = true;
+  vDirty = true; clearTimeout(vTimer); vTimer = setTimeout(() => { baseDirty = true; requestFrame(); }, 140);
 }
 
 function renderBase() {
@@ -831,10 +838,17 @@ function frame() {
   const a = S.act;
   if (a && a.snap) stepSnap(a);
   const anim = pagesAnimating();
-  if (baseDirty || anim) { renderBase(); baseDirty = false; }
   const { s, x, y } = S.view;
+  if (baseDirty || anim || (vDirty && (!bView || lastRenderMs < 7 || base.width !== bView.w))) {
+    const t0 = performance.now(); renderBase(); lastRenderMs = performance.now() - t0; baseDirty = false; vDirty = false; bView = { s, x, y, w: base.width };
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(base, 0, 0);
+  if (vDirty && bView) {                                  // moving a heavy page: reuse the last picture
+    const k = s / bView.s, tx = (x - bView.x * k) * dpr, ty = (y - bView.y * k) * dpr;
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--stage').trim() || '#dfe2ec';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(k, 0, 0, k, tx, ty); ctx.drawImage(base, 0, 0); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  } else ctx.drawImage(base, 0, 0);
   ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * x, dpr * y);
   const dark = S.doc.paper.color === 'dark';
   const inf = isInf(S.doc);
@@ -1982,7 +1996,7 @@ cv.addEventListener('wheel', (e) => {
   e.preventDefault();
   const [sx, sy] = local(e);
   if (e.ctrlKey || e.metaKey) zoomAt(sx, sy, Math.exp(-e.deltaY * 0.01));
-  else { S.view.x -= e.deltaX; S.view.y -= e.deltaY; clampView(); requestFrame(true); }
+  else { S.view.x -= e.deltaX; S.view.y -= e.deltaY; clampView(); viewMoved(); }
 }, { passive: false });
 
 function runAction(a) {
@@ -2018,7 +2032,7 @@ function zoomAt(sx, sy, k) {
   const v = S.view, [wx, wy] = toWorld(sx, sy);
   v.s *= k; clampView();
   v.x = sx - wx * v.s; v.y = sy - wy * v.s; clampView();
-  requestFrame(true); flashZoom();
+  viewMoved(); flashZoom();
 }
 function beginPan(pid, sx, sy, finger) {
   S.mode = 'pan'; pan = { pid, sx, sy, x0: sx, y0: sy, vx: 0, vy: 0, t: now(), t00: now(), dist: 0, finger };
@@ -2029,7 +2043,7 @@ function movePan(sx, sy) {
   pan.vx = 0.7 * pan.vx + 0.3 * (dx / dt); pan.vy = 0.7 * pan.vy + 0.3 * (dy / dt); pan.t = t;
   pan.dist += Math.hypot(dx, dy);
   pan.sx = sx; pan.sy = sy;
-  S.view.x += dx; S.view.y += dy; clampView(); requestFrame(true);
+  S.view.x += dx; S.view.y += dy; clampView(); viewMoved();
 }
 function endPan(cancelled) {
   S.mode = null;
@@ -2055,7 +2069,7 @@ function startMomentum(vx, vy) {
     const t = now(), dt = t - last; last = t;
     S.view.x += vx * dt; S.view.y += vy * dt;
     const k = Math.pow(0.94, dt / 16); vx *= k; vy *= k;
-    clampView(); requestFrame(true);
+    clampView(); viewMoved();
     if (Math.hypot(vx, vy) > 0.03) momentum = requestAnimationFrame(step); else momentum = null;
   };
   momentum = requestAnimationFrame(step);
@@ -2076,7 +2090,7 @@ function movePinch() {
   const v = S.view;
   v.s = pinch.s * d / pinch.d; clampView();
   v.x = cx - pinch.w[0] * v.s; v.y = cy - pinch.w[1] * v.s; clampView();
-  requestFrame(true); flashZoom();
+  viewMoved(); flashZoom();
 }
 
 /* =====================================================================
@@ -2706,6 +2720,7 @@ function finishAct() {
   if (a.kind === 'ink') {
     if (a.snap && !a.snap.done) { a.st.p = a.snap.finalPts.flatMap((q) => [q[0], q[1], 0.5]); a.snap.done = true; }
     if (a.st.p.length === 3) a.st.p.push(a.st.p[0], a.st.p[1], a.st.p[2]);
+    else if (!a.snap && !a.rl && !a.st.sh && a.st.p.length > 24) a.st.p = simplifyInk(a.st.p);
     bbCache.delete(a.st);
     if (S.pdf && a.st.p.length <= 12 && !a.snap) {                      // a quick tap on a PDF link follows it instead of leaving a dot
       const q = a.st.p, ext = Math.hypot(q[q.length - 3] - q[0], q[q.length - 2] - q[1]), pl = ext < 4 && pdfLinkAt(q[0], q[1] + S.layout.ys[a.pi]);
@@ -3441,6 +3456,45 @@ async function extractDialog(wr) {
 }
 
 /* ---- tidy up storage: pictures, recordings and files that no note uses any more ---- */
+
+/* ---- ink packing: drop points that do not change the line (0.2 px) or the pressure, round the rest ---- */
+function simplifyInk(p, eps = 0.2) {
+  const n = p.length / 3; if (n < 8) return p;
+  const Z = 6, keep = new Uint8Array(n); keep[0] = keep[n - 1] = 1;
+  const stack = [[0, n - 1]];
+  const d2 = (i, a, b) => {            // squared distance of point i from segment a-b in (x, y, pressure*Z)
+    const ax = p[a * 3], ay = p[a * 3 + 1], az = p[a * 3 + 2] * Z, bx = p[b * 3], by = p[b * 3 + 1], bz = p[b * 3 + 2] * Z, px = p[i * 3], py = p[i * 3 + 1], pz = p[i * 3 + 2] * Z;
+    const dx = bx - ax, dy = by - ay, dz = bz - az, l2 = dx * dx + dy * dy + dz * dz;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / l2)) : 0;
+    const qx = ax + t * dx - px, qy = ay + t * dy - py, qz = az + t * dz - pz; return qx * qx + qy * qy + qz * qz * 0.25;
+  };
+  while (stack.length) {
+    const [a, b] = stack.pop(); let mx = -1, mi = -1;
+    for (let i = a + 1; i < b; i++) { const d = d2(i, a, b); if (d > mx) { mx = d; mi = i; } }
+    if (mx > eps * eps) { keep[mi] = 1; stack.push([a, mi], [mi, b]); }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(Math.round(p[i * 3] * 100) / 100, Math.round(p[i * 3 + 1] * 100) / 100, Math.round(p[i * 3 + 2] * 100) / 100);
+  return out;
+}
+async function shrinkInk() {
+  if (PANE) return { strokes: 0, before: 0, after: 0 };
+  if (S.doc) await saveNow().catch(() => {});
+  const open = new Set(S.tabs.map((t) => t.id));
+  let strokes = 0, before = 0, after = 0;
+  for (const m of await db.listMeta()) {
+    if (m.type === 'folder' || m.trashed || open.has(m.id)) continue;
+    const d = await db.getDoc(m.id).catch(() => null); if (!d) continue;
+    let changed = false;
+    for (const pg of d.pages || []) for (const st of pg.strokes || []) {
+      if (!st.p || st.p.length < 60 || st.sh) continue;
+      const q = simplifyInk(st.p); before += st.p.length; after += q.length;
+      if (q.length < st.p.length * 0.9) { st.p = q; changed = true; strokes++; } else after += st.p.length - q.length;
+    }
+    if (changed) await db.saveDoc(d, { ...m });
+  }
+  return { strokes, before, after };
+}
 async function cleanupStorage(manual) {
   if (PANE) return null;
   const busy = S.tabs.some((t) => t.hist && (t.hist.u.length || t.hist.r.length)) || (S.hist && (S.hist.u.length || S.hist.r.length));
@@ -3516,7 +3570,8 @@ const BAR_ACTIONS = [
   ['fit', 'Fit to screen', 'fit', () => { const t = {}; const keep = { ...S.view }; fitView(); Object.assign(t, S.view); S.view = keep; animateView(t, 280); }],
   ['ruler', 'Ruler', 'ruler', () => { if (S.ruler) S.ruler = null; else { const [wx, wy] = toWorld(vw / 2, vh / 2); S.ruler = { x: wx, y: wy, a: 0 }; } requestFrame(); }],
 ];
-const BAR_DEFAULT = ['find', 'mark', 'rec', 'layers', 'undo', 'redo', 'pages', 'share'];
+const BAR_DEFAULT = ['undo', 'redo', 'find', 'mark', 'rec', 'layers', 'addpg', 'pages', 'share'];
+const BAR_LEFT = new Set(['undo', 'redo']);
 const barPrefs = () => { const p = prefs.get('bar', null); const order = p && Array.isArray(p.order) ? p.order.filter((k) => BAR_ACTIONS.some((a) => a[0] === k)) : [...BAR_DEFAULT]; return { order }; };
 const barSave = (b) => prefs.set('bar', b);
 const barBtnId = (k) => ({ find: 'btnFind', mark: 'btnMark', rec: 'btnRec', layers: 'btnLayers', undo: 'btnUndo', redo: 'btnRedo', pages: 'btnPages', share: 'btnShare' }[k] || 'bbtn-' + k);
@@ -3525,7 +3580,7 @@ function buildTopbar() {
   for (const [k, label, ic, fn] of BAR_ACTIONS) {
     let b = document.getElementById(barBtnId(k));
     if (!b) { b = h('button', { id: barBtnId(k), class: 'ib', 'aria-label': label, title: label }, icon(ic)); b.onclick = () => fn(); tb.insertBefore(b, more); }
-    const i = on.indexOf(k); b.hidden = i < 0; b.style.order = i < 0 ? 99 : 10 + i;
+    const i = on.indexOf(k); b.hidden = i < 0; b.style.order = i < 0 ? 99 : BAR_LEFT.has(k) ? 1 + i : 10 + i;
   }
   syncTopbar();
 }
@@ -4091,7 +4146,7 @@ async function importPdf(file) {
    ===================================================================== */
 function renderTabs() {
   const el = $('#tabs'); el.innerHTML = '';
-  document.body.classList.toggle('at-home', !S.tab);
+  document.body.classList.toggle('at-home', !S.tab); document.body.dataset.tabs = Math.min(S.tabs.length, 5);
   try { updateReadChip(); } catch {}
   el.append(h('button', { class: 'tab home' + (S.tab ? '' : ' on'), 'aria-label': 'Home', onclick: () => switchTo(null) }, icon('home', 20)));
   const strip = h('div', { class: 'tabscroll' });      // only this part scrolls; Home, +, and Split stay put
@@ -5036,21 +5091,77 @@ function menuCats() {
   return [{ id: 'note', name: 'Note', ic: 'book', col: '#3b5bdb', items: note.filter(Boolean) }, { id: 'page', name: 'Page', ic: 'pages', col: '#f76707', items: page.filter(Boolean) }, { id: 'view', name: 'View', ic: 'focus', col: '#2f9e44', items: view.filter(Boolean) }];
 }
 function closeMenu2() { const m = $('#menu2'); if (m) m.remove(); }
-function openMenu(open) {
-  const m = $('#menu'); m.innerHTML = ''; m.hidden = false; menuOpen = true;
-  const cats = menuCats(); open = open || (m._open && cats.some((c) => c.id === m._open) ? m._open : null); m._open = open;
-  m.append(h('button', { class: 'mset', type: 'button', onclick: () => { closeMenu(); settingsDialog(); } }, icon('settings', 22), h('span', {}, 'Settings')));
-  cats.forEach((c) => m.append(h('button', { class: 'mfold' + (open === c.id ? ' on' : ''), type: 'button', 'data-cat': c.id, style: `--fc:${c.col}`, onclick: () => (m._open === c.id ? (m._open = null, closeMenu2(), openMenu()) : openMenu(c.id)) },
-    h('span', { class: 'fic' }, icon(c.ic, 22)), h('b', {}, c.name), h('small', {}, c.items.length + ' options'), h('span', { class: 'chev' }, '›'))));
-  closeMenu2();
-  const c = cats.find((x) => x.id === open); if (!c) return;
-  const sub = h('div', { id: 'menu2', class: 'menu menu2', style: `--fc:${c.col}` }, h('div', { class: 'm2head' }, h('span', { class: 'fic' }, icon(c.ic, 18)), h('b', {}, c.name),
-    h('button', { class: 'ib sm', type: 'button', 'aria-label': 'Close', onclick: () => { m._open = null; closeMenu2(); openMenu(); } }, icon('x', 18))));
-  const grid = h('div', { class: 'm2grid' });
-  c.items.forEach((o) => grid.append(h('button', { class: 'mi tile' + (o.danger ? ' danger' : '') + (o.on ? ' on' : ''), type: 'button', title: o.tip || o.label, onclick: () => { if (!o.keep) closeMenu(); o.fn(); if (o.keep) openMenu(c.id); } },
-    h('span', { class: 'ico' }, icon(o.ic, 22)), h('span', { class: 'lb' }, o.label))));
-  sub.append(grid); document.body.append(sub);
+
+/* ---- every feature, for the ⋯ search box ---- */
+function featureIndex() {
+  const out = [], add = (ic, label, cat, fn, kw = '') => out.push({ ic, label, cat, fn, tip: kw });
+  const tool = (k, label, ic, kw, pre) => add(ic, label, 'Tools', () => { if (pre) pre(); setTool(k); }, kw);
+  tool('pen', 'Pen', 'ball', 'write draw ink ballpoint fountain pencil brush marker');
+  tool('hl', 'Highlighter', 'hl', 'highlight marker');
+  tool('hl', 'Tape', 'hl', 'cover hide mask text', () => { S.tools.hl.tape = true; });
+  tool('eraser', 'Eraser', 'eraser', 'rub delete stroke area');
+  tool('lasso', 'Lasso select', 'lasso', 'select move copy cut');
+  tool('shape', 'Shapes', 'shape', 'line arrow rectangle circle triangle star');
+  tool('text', 'Text box', 'text', 'type keyboard');
+  tool('laser', 'Laser pointer', 'laser', 'present point');
+  tool('hand', 'Hand (move page)', 'hand', 'pan scroll drag');
+  add('ruler', 'Ruler', 'Tools', () => { if (S.ruler) S.ruler = null; else { const [wx, wy] = toWorld(vw / 2, vh / 2); S.ruler = { x: wx, y: wy, a: 0 }; } requestFrame(); }, 'straight line angle snap');
+  add('drop', 'Colour picker (eyedropper)', 'Tools', () => eyedrop((c) => { const T = S.tools[S.tool]; if (c && T) { T.c = c; savePrefs(); syncDock(); rememberColor(c); } }), 'color pipette sample');
+  add('search', 'Zoom window', 'Tools', openZoom, 'magnify zoom close up');
+  add('image', 'Insert picture', 'Insert', () => $('#imgfile').click(), 'photo image gallery');
+  add('camera', 'Take photo', 'Insert', () => $('#camfile').click(), 'camera scan');
+  add('comment', 'Comment', 'Insert', () => { S.cmtPrev = S.tool; setTool('comment'); toast('Tap anywhere to leave a comment'); }, 'note sticky');
+  add('mic', 'Audio clip', 'Insert', audioDialog, 'sound voice');
+  add('present', 'Video', 'Insert', videoDialog, 'movie youtube');
+  add('bookmark', 'Elements', 'Insert', elementsDialog, 'stickers shapes icons');
+  add('copy', 'Paste', 'Insert', pasteClip, 'clipboard');
+  add('todo', 'To-do list', 'Insert', () => newList('[ ] '), 'checklist checkbox tasks');
+  add('list', 'Bullet list', 'Insert', () => newList('- '));
+  add('olist', 'Numbered list', 'Insert', () => newList('1. '));
+  add('link', 'Link to a note', 'Insert', noteLinkDialog, 'wiki backlink');
+  add('arrow', 'Web link', 'Insert', linkDialog, 'url');
+  if (!isInf(S.doc)) add('board', 'Whiteboard card', 'Insert', boardDialog, 'board canvas');
+  add('edit', 'Handwriting to text', 'Note', () => convertToText(), 'convert recognize ocr typed');
+  add('bookmark', 'Saved pages and pinned notes', 'Note', bookmarksDialog, 'bookmarks pinned');
+  add('todo', 'Flashcards', 'Note', studyDialog, 'study cards review spaced repetition');
+  add('clock', 'Reminders', 'Note', () => reminderDialog(null), 'alarm notify');
+  add('graph', 'Note graph', 'Note', graphDialog, 'links map connections');
+  add('undo', 'Undo', 'Note', () => undo()); add('redo', 'Redo', 'Note', () => redo());
+  add('settings', 'Cleanup storage', 'Storage', async () => { try { const r = await cleanupStorage(true); toast(r && r.files ? 'Freed ' + fmtMB(r.freed) : 'Storage is tidy', 3000); } catch { toast('Cleanup failed'); } }, 'free space unused files');
+  add('settings', 'Shrink handwriting', 'Storage', async () => { try { const r = await shrinkInk(); toast(r.strokes ? 'Shrunk ' + r.strokes + ' strokes' : 'Nothing to shrink', 3000); } catch { toast('Shrink failed'); } }, 'smaller ink compress');
+  add('down', 'Back up now', 'Storage', () => settingsTabOpen('backup'), 'export save restore');
+  add('upload', 'Sync with Drive', 'Storage', () => settingsTabOpen('backup'), 'google drive cloud');
+  const tk = { look: 'theme colour color dark light style studio glass clay midnight paper custom', toolbar: 'dock tools reorder hide size move', bar: 'top bar buttons customise reorder', pen: 's pen button barrel hover eraser hold press', draw: 'stabilizer smooth snap shape pressure palm', touch: 'gestures two finger tap three finger stylus only palm', search: 'handwriting reading ocr index language', backup: 'backup restore sync drive storage cleanup', lock: 'pin fingerprint password app lock privacy', about: 'version help' };
+  for (const [id, label, ic] of [['look', 'Look', 'paper'], ['toolbar', 'Toolbar', 'grip'], ['bar', 'Note bar', 'list'], ['pen', 'S Pen', 'ball'], ['draw', 'Drawing', 'shape'], ['touch', 'Touch', 'hand'], ['search', 'Handwriting reading', 'search'], ['backup', 'Backup and sync', 'shield'], ['lock', 'App lock', 'lock'], ['about', 'About', 'book']]) add(ic, 'Settings: ' + label, 'Settings', () => settingsTabOpen(id), tk[id]);
+  for (const [id, label] of STYLES) add('palette', 'Look: ' + label, 'Settings', () => { prefs.set('style', id); applyStyle(id); requestFrame(true); }, 'theme appearance');
+  return out;
 }
+/* ⋯ menu: a small command palette. Settings and quick switches on top, then a plain list; type to search every action. */
+function openMenu() {
+  const m = $('#menu'); m.innerHTML = ''; m.hidden = false; menuOpen = true; closeMenu2();
+  const cats = menuCats(), all = cats.flatMap((c) => c.items.map((o) => ({ ...o, cat: c.name })));
+  const run = (o) => { if (!o.keep) closeMenu(); o.fn(); if (o.keep) openMenu(); };
+  const quick = ['pin', 'lock', 'palm', 'mic'].map((ic) => all.find((o) => o.ic === ic)).concat(all.find((o) => o.label === (S.doc && isInf(S.doc) ? 'Focus' : 'Bookmark'))).filter(Boolean);
+  const qLabels = new Set(quick.map((o) => o.label));
+  const q = h('input', { type: 'search', class: 'mq', placeholder: 'Search every feature', 'aria-label': 'Search every feature', autocomplete: 'off', spellcheck: 'false' });
+  const list = h('div', { class: 'mlist' });
+  const paint = () => {
+    const t = q.value.trim().toLowerCase(); list.innerHTML = '';
+    const rows = t ? (() => { const seen = new Set(), words = t.split(/\s+/); return all.concat(featureIndex()).filter((o) => { const hay = (o.label + ' ' + (o.tip || '') + ' ' + o.cat).toLowerCase(); if (!words.every((w) => hay.includes(w))) return false; const k = o.label.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }); })() : null;
+    if (rows) { if (!rows.length) list.append(h('div', { class: 'mempty' }, 'Nothing matches')); rows.forEach((o) => list.append(row(o, true))); return; }
+    cats.forEach((c, i) => { if (i) list.append(h('hr', { class: 'msep' })); c.items.filter((o) => !qLabels.has(o.label)).forEach((o) => list.append(row({ ...o, cat: c.name }, false))); });
+  };
+  const row = (o, showCat) => h('button', { class: 'mi row' + (o.danger ? ' danger' : '') + (o.on ? ' on' : ''), type: 'button', title: o.tip || o.label, onclick: () => run(o) },
+    h('span', { class: 'ico' }, icon(o.ic, 20)), h('span', { class: 'lb' }, o.label), showCat ? h('small', {}, o.cat) : (o.on ? h('i', { class: 'dot' }) : null));
+  q.addEventListener('input', paint);
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const f = list.querySelector('.mi'); if (f) f.click(); } else if (e.key === 'Escape') closeMenu(); });
+  m.append(h('div', { class: 'mhd' }, h('label', { class: 'mqw' }, icon('search', 16), q), h('button', { class: 'mset', type: 'button', title: 'Settings', 'aria-label': 'Settings', onclick: () => { closeMenu(); settingsDialog(); } }, icon('settings', 20))),
+    h('div', { class: 'mquick' }, quick.map((o) => h('button', { class: 'mi qt' + (o.on ? ' on' : ''), type: 'button', title: o.tip || o.label, onclick: () => run({ ...o, keep: true }) }, icon(o.ic, 20), h('span', {}, o.label)))),
+    list);
+  paint(); fitMenu(m);
+}
+function fitMenu(m) { m.style.maxHeight = ''; const top = m.getBoundingClientRect().top; m.style.maxHeight = Math.max(200, (window.visualViewport ? window.visualViewport.height : innerHeight) - top - 10) + 'px'; }
+window.addEventListener('resize', () => { const m = $('#menu'); if (m && !m.hidden) fitMenu(m); });
 async function linksDialog() {
   const d = S.doc, meta = (await db.getMeta(d.id)) || { id: d.id, title: d.title };
   const out = docLinks(d), me = d.title.trim().toLowerCase();
@@ -5270,6 +5381,8 @@ function backupPane(repaint) {
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Storage cleanup', h('small', {}, prefs.get('lastClean', 0) ? 'Last tidy: ' + new Date(prefs.get('lastClean', 0)).toLocaleDateString() : 'Removes pictures, recordings and files no note uses')),
       h('div', { class: 'segs mini' }, h('button', { class: 'seg', type: 'button', onclick: async (e) => { e.currentTarget.textContent = 'Tidying…'; try { const r = await cleanupStorage(true); toast(r && r.files ? 'Freed ' + fmtMB(r.freed) + ' (' + r.files + ' unused file' + (r.files === 1 ? '' : 's') + ')' : 'Nothing to clean up. Storage is tidy.', 3600); } catch (err) { toast('Cleanup failed: ' + ((err && err.message) || err), 4000); } repaint(); } }, 'Clean up now'),
         h('button', { class: 'seg' + (prefs.get('autoClean', true) ? ' on' : ''), type: 'button', onclick: () => { prefs.set('autoClean', !prefs.get('autoClean', true)); repaint(); } }, prefs.get('autoClean', true) ? 'Auto: weekly' : 'Auto: off'))),
+    h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Shrink handwriting', h('small', {}, 'Removes points that do not change how a line looks. Smaller notes, backups and sync file. New writing is packed automatically.')),
+      h('div', { class: 'segs mini' }, h('button', { class: 'seg', type: 'button', onclick: async (e) => { const b = e.currentTarget; b.textContent = 'Working…'; try { const r = await shrinkInk(); toast(r.strokes ? 'Shrunk ' + r.strokes + ' strokes by ' + Math.round(100 - 100 * r.after / Math.max(1, r.before)) + '%' : 'Nothing to shrink', 3200); } catch (err) { toast('Shrink failed: ' + ((err && err.message) || err), 4000); } b.textContent = 'Shrink now'; } }, 'Shrink now'))),
     ...abPaneRows(repaint),
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Last backup', h('small', {}, last ? new Date(last).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Never. Your notes live only on this device.')), h('div', {})),
     h('div', { class: 'srow' }, h('div', { class: 'slabel' }, 'Storage', box), h('div', {})),
@@ -5503,6 +5616,7 @@ function wire() {
   document.addEventListener('click', (e) => { if (!e.target.closest('.fab-wrap')) toggleFab(false); });
 
   window.addEventListener('keydown', (e) => {
+    if (S.doc && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); closePop(); openMenu(); const q = $('#menu .mq'); if (q) q.focus(); return; }
     if (S.doc && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !e.shiftKey) { e.preventDefault(); const inp = $('#findbar input'); if (S.find && inp) { inp.focus(); inp.select(); } else openFind(''); return; }
     if (!S.doc || e.target.closest('input,textarea')) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
@@ -6089,11 +6203,28 @@ async function boot() {
 boot();
 
 // test hook
-window.__ink = { updateReadChip, recenterUI, moveIntoFolder, folderStyleDialog, eraseAt, editL, cleanupStorage, extractDialog, boardDialog, lassoSelect, layersDialog, eyedrop, bookmarksDialog, descendants, rebuildWidget, setWidget, shareImages, consumeShared, studyDialog, reminderDialog, timerDialog, startTimer, switchTo, openDoc, startRecWrite, stopRecWrite, playFrom, audioItems, settingsTabOpen, S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote, graphDialog, Indexer, ocr, openFind, findHits, exportAll, restore, inspect };
+window.__ink = { simplifyInk, shrinkInk, updateReadChip, recenterUI, moveIntoFolder, folderStyleDialog, eraseAt, editL, cleanupStorage, extractDialog, boardDialog, lassoSelect, layersDialog, eyedrop, bookmarksDialog, descendants, rebuildWidget, setWidget, shareImages, consumeShared, studyDialog, reminderDialog, timerDialog, startTimer, switchTo, openDoc, startRecWrite, stopRecWrite, playFrom, audioItems, settingsTabOpen, S, db, L, recognize, quickNote, openZoom, rotHandle, textLayout, textHot, makeSel, copySel, pasteClip, docLinks, refreshLibrary, trashItem, findNote, graphDialog, Indexer, ocr, openFind, findHits, exportAll, restore, inspect };
 
 function syncTopbar() {
   if (!S.doc) return;
-  const bm = $('#btnMark'); if (bm) { const on = !isInf(S.doc) && !!(S.doc.pages[S.curPage || 0] || {}).bm; bm.classList.toggle('on', on); bm.hidden = isInf(S.doc); }
+  const on = barPrefs().order, inf = isInf(S.doc), custom = prefs.get('bar', null) != null;
+  const bm = $('#btnMark'); if (bm) { bm.classList.toggle('on', !inf && !!(S.doc.pages[S.curPage || 0] || {}).bm); bm.hidden = inf || !on.includes('mark'); }
+  const ap = $('#bbtn-addpg'); if (ap) ap.hidden = inf || !on.includes('addpg');
+  const fo = $('#bbtn-focus'); if (fo && !custom) { fo.hidden = !inf; if (inf) fo.style.order = 13; }
   const r = $('#btnRec'); if (r) r.classList.toggle('on', !!S.rec);
 }
 setInterval(syncTopbar, 700);
+
+/* on-screen keyboard: size to the visible area, scroll instead of overlapping */
+(() => {
+  const vv = window.visualViewport; if (!vv) return; let maxH = vv.height;
+  const upd = () => {
+    maxH = Math.max(maxH * 0.98, vv.height, innerHeight);
+    document.documentElement.style.setProperty('--vvh', Math.round(vv.height) + 'px');
+    const kb = vv.height < maxH * 0.8; document.body.classList.toggle('kb', kb);
+    const m = $('#menu'); if (m && !m.hidden) fitMenu(m);
+    if (kb) { const f = document.activeElement; if (f && f.matches && f.matches('input,textarea') && f.closest('dialog,#menu,.layp')) setTimeout(() => f.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }
+  };
+  vv.addEventListener('resize', upd); vv.addEventListener('scroll', upd); window.addEventListener('orientationchange', () => { maxH = 0; setTimeout(upd, 300); });
+  document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('input,textarea') && e.target.closest('dialog,#menu,.layp')) setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300); });
+})();
