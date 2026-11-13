@@ -965,3 +965,15 @@ dialog{max-height:min(90vh,calc(var(--vvh,100vh) - 16px))}
 .layp{max-height:calc(var(--vvh,100vh) - var(--tabh,0px) - 70px)}
 body.kb .dock,body.kb .fab-wrap,body.kb .zoombar,body.kb .timerchip{display:none!important}
 body.kb dialog{margin-top:8px;align-self:flex-start}
+
+/* 3.33: + sits right after the last tab; tab width follows how many are open; menu rows never squeeze */
+.tabscroll{flex:0 1 auto}
+.tabscroll .tab{flex:0 1 220px;width:220px;min-width:112px;max-width:none}
+body[data-tabs="1"] .tabscroll .tab{width:380px;flex-basis:380px}
+body[data-tabs="2"] .tabscroll .tab{width:300px;flex-basis:300px}
+body[data-tabs="3"] .tabscroll .tab{width:250px;flex-basis:250px}
+#menu .mlist{grid-auto-rows:min-content;flex:1 1 auto;overflow-y:auto;min-height:60px}
+#menu .mi.row{flex:none;min-height:38px;height:auto}
+#menu .mhd,#menu .mquick{flex:none}
+body.kb #menu .mquick{display:none}
+body.kb #menu.menu{top:calc(var(--tabh) + 2px)}

@@ -199,7 +199,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.32';
+const APP_VERSION = '3.33';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['studio', 'Studio'], ['graphite', 'Graphite'], ['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { studio: { bg: '#eef0f4', ac: '#2f6df6' }, graphite: { bg: '#15171c', ac: '#8aa4ff' }, midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -4166,7 +4166,7 @@ function renderTabs() {
   el.append(strip);
   el.append(h('button', { class: 'tab add', 'aria-label': 'Open another note', onclick: () => switchTo(null) }, icon('plus', 18, 2.2)));
   el.append(h('span', { class: 'grow' }),
-    h('button', { class: 'tab split' + (panes.length ? ' on' : ''), 'aria-label': PANE ? 'Close this split pane' : 'Split screen', title: PANE ? 'Close this split pane' : 'Split screen', onclick: toggleSplit }, icon(PANE ? 'x' : 'split', 19, 2.1), h('span', { class: 'tlabel' }, PANE ? 'Close' : panes.length ? 'Split ' + (panes.length + 1) : 'Split')));
+    !PANE && !panes.length ? null : h('button', { class: 'tab split' + (panes.length ? ' on' : ''), 'aria-label': PANE ? 'Close this split pane' : 'Split screen', title: PANE ? 'Close this split pane' : 'Split screen', onclick: toggleSplit }, icon(PANE ? 'x' : 'split', 19, 2.1), h('span', { class: 'tlabel' }, PANE ? 'Close' : panes.length ? 'Split ' + (panes.length + 1) : 'Split')));
   const act = strip.querySelector('.tab.on');
   if (act) { const l = act.offsetLeft, r = l + act.offsetWidth; if (l < strip.scrollLeft) strip.scrollLeft = Math.max(0, l - 8); else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth + 8; }
 }
@@ -5160,7 +5160,7 @@ function openMenu() {
     list);
   paint(); fitMenu(m);
 }
-function fitMenu(m) { m.style.maxHeight = ''; const top = m.getBoundingClientRect().top; m.style.maxHeight = Math.max(200, (window.visualViewport ? window.visualViewport.height : innerHeight) - top - 10) + 'px'; }
+function fitMenu(m) { m.style.maxHeight = ''; const top = m.getBoundingClientRect().top; m.style.maxHeight = Math.max(110, (window.visualViewport ? window.visualViewport.height : innerHeight) - top - 10) + 'px'; }
 window.addEventListener('resize', () => { const m = $('#menu'); if (m && !m.hidden) fitMenu(m); });
 async function linksDialog() {
   const d = S.doc, meta = (await db.getMeta(d.id)) || { id: d.id, title: d.title };
@@ -6222,7 +6222,7 @@ setInterval(syncTopbar, 700);
     maxH = Math.max(maxH * 0.98, vv.height, innerHeight);
     document.documentElement.style.setProperty('--vvh', Math.round(vv.height) + 'px');
     const kb = vv.height < maxH * 0.8; document.body.classList.toggle('kb', kb);
-    const m = $('#menu'); if (m && !m.hidden) fitMenu(m);
+    const m = $('#menu'); if (m && !m.hidden) requestAnimationFrame(() => fitMenu(m));
     if (kb) { const f = document.activeElement; if (f && f.matches && f.matches('input,textarea') && f.closest('dialog,#menu,.layp')) setTimeout(() => f.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }
   };
   vv.addEventListener('resize', upd); vv.addEventListener('scroll', upd); window.addEventListener('orientationchange', () => { maxH = 0; setTimeout(upd, 300); });

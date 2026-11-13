@@ -62,6 +62,11 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.33
+- ⋯ menu rows no longer squeeze together when the keyboard is up: the list scrolls, the quick row hides, and the menu moves up.
+- The + tab button sits right after the last tab; tab width follows how many notes are open.
+- The Split button is gone from the tab bar (drag a tab to the side to split; a Close button appears inside a split pane).
+
 ## What's new in 3.32
 - ⋯ search is now universal: tools, insert items, settings pages, looks, flashcards, reminders, storage actions and every menu action. Ctrl+K opens it.
 - Whiteboards: the quick row shows Focus instead of Bookmark, and the top bar shows Focus instead of Bookmark and Add page.
