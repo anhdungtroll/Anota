@@ -199,7 +199,7 @@ const confirmDlg = (title, text, okLabel = 'Delete') => new Promise((res) => {
 /* =====================================================================
    Constants & model
    ===================================================================== */
-const APP_VERSION = '3.33';
+const APP_VERSION = '3.34';
 const PANE = new URLSearchParams(location.search).has('pane');
 const STYLES = [['studio', 'Studio'], ['graphite', 'Graphite'], ['glass', 'Glass'], ['clay', 'Clay'], ['og', 'Classic'], ['midnight', 'Midnight'], ['paper', 'Paper'], ['custom', 'Custom']];
 const PRESETS = { studio: { bg: '#eef0f4', ac: '#2f6df6' }, graphite: { bg: '#15171c', ac: '#8aa4ff' }, midnight: { bg: '#0d1224', ac: '#4cc9f0' }, paper: { bg: '#f4ecdc', ac: '#a8431f' } };
@@ -2791,7 +2791,7 @@ function finishAct() {
    Persistence
    ===================================================================== */
 let saveTimer = null;
-function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 900); }
+function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 900); if (S.tab) S.tab.edited = true; }
 async function saveNow() {
   clearTimeout(saveTimer); saveTimer = null;
   const d = S.doc; if (!d) return;
@@ -2983,7 +2983,6 @@ function renderLibrary(animate = false) {
   f.append(h('button', { class: 'chip sortchip', onclick: sortDialog }, [icon('sort', 14), ' ' + SORTS.find((x) => x[0] === L.sort)[1]]),
     h('button', { class: 'chip toolchip', onclick: graphDialog }, [icon('graph', 14), ' Graph']),
     L.folder ? h('button', { class: 'chip', onclick: () => { prefs.set('searchScope', prefs.get('searchScope', 'folder') === 'folder' ? 'all' : 'folder'); renderLibrary(true); } }, [icon('search', 14), prefs.get('searchScope', 'folder') === 'folder' ? ' Search: this folder' : ' Search: everywhere']) : null,
-    h('button', { class: 'chip toolchip', onclick: () => { L.sel = L.sel ? null : new Set(); renderLibrary(); } }, [icon('check', 14), ' Select']),
     h('button', { class: 'chip toolchip', onclick: bookmarksDialog }, [icon('bookmark', 14), ' Bookmarks']),
     h('button', { class: 'chip toolchip', onclick: studyDialog }, [icon('bookmark', 14), ' Cards']),
     h('button', { class: 'chip toolchip', onclick: () => reminderDialog(null) }, [icon('clock', 14), ' Reminders']),
@@ -2993,7 +2992,6 @@ function renderLibrary(animate = false) {
     const rb = (ic, label, fn, on) => rail.append(h('button', { class: 'rb' + (on ? ' on' : ''), type: 'button', 'aria-label': label, title: label, onclick: fn }, icon(ic, 22), h('span', {}, label)));
     rail.append(h('img', { src: 'icons/icon-192.png', alt: '', class: 'rlogo' }));
     rb('home', 'Home', () => { L.filter = 'all'; L.tag = null; L.q = ''; $('#search').value = ''; if (L.folder) { L.folder = null; } renderLibrary(true); }, L.filter === 'all' && !L.folder); rail.lastChild.dataset.fid = '';
-    rb('check', 'Select', () => { L.sel = L.sel ? null : new Set(); renderLibrary(); }, !!L.sel);
     rb('bookmark', 'Saved', bookmarksDialog); rb('todo', 'Cards', studyDialog); rb('clock', 'Remind', () => reminderDialog(null)); rb('clock', 'Timer', timerDialog); rb('graph', 'Graph', graphDialog);
     rail.append(h('span', { class: 'sp' }));
     rb('trash', 'Trash', () => { L.filter = L.filter === 'trash' ? 'all' : 'trash'; L.tag = null; renderLibrary(true); }, L.filter === 'trash');
@@ -3042,7 +3040,7 @@ function renderLibrary(animate = false) {
         h('div', { class: 'card-title' }, m.title),
         h('div', { class: 'card-sub' }, (kids.length === 1 ? '1 item' : `${kids.length} items`) + (inTrash ? ` · ${daysLeft}d left` : '')),
         L.sel ? h('span', { class: 'pickmark' }, icon('check', 14, 3)) : null);
-      if (!inTrash && !L.sel) dragToSplit(fcard, () => ({ id: m.id, title: m.title, type: 'folder' }), { delay: 420, noSplit: true });
+      if (!inTrash && !L.sel) dragToSplit(fcard, () => ({ id: m.id, title: m.title, type: 'folder' }), { delay: 420, noSplit: true, onLong: () => { L.sel = new Set([m.id]); renderLibrary(); toast('Select mode. Tap items to add them.', 2200); } });
       g.append(fcard);
       return;
     }
@@ -3058,7 +3056,7 @@ function renderLibrary(animate = false) {
       !inTrash && (m.tags || []).length ? h('div', { class: 'card-tags' }, m.tags.slice(0, 3).map((t) => '#' + t).join(' ')) : null,
       !m.locked && L.q && L.idxHits && L.idxHits.has(m.id) ? (() => { const hs = L.idxHits.get(m.id), x = hs[0]; return h('div', { class: 'card-snip' }, icon(x.kind === 'ink' ? 'edit' : x.kind === 'img' ? 'image' : 'text', 14), h('span', {}, (m.type === 'whiteboard' ? '' : 'p.' + (x.pi + 1) + ' · ') + x.t + (hs.length > 1 ? '  +' + (hs.length - 1) : ''))); })() : null);
     if (L.sel) cardEl.append(h('span', { class: 'pickmark' }, icon('check', 14, 3)));
-    if (!L.sel && !inTrash) dragToSplit(cardEl, () => ({ id: m.id, title: m.title, type: m.type }), { delay: 480 });
+    if (!L.sel && !inTrash) dragToSplit(cardEl, () => ({ id: m.id, title: m.title, type: m.type }), { delay: 480, onLong: () => { L.sel = new Set([m.id]); renderLibrary(); toast('Select mode. Tap items to add them.', 2200); } });
     g.append(cardEl);
   });
   selBar();
@@ -3589,6 +3587,7 @@ function buildTopbar() {
 function layersPanel() {
   if (!S.doc) return;
   let el = $('#layp'); if (el) { el.remove(); return; }
+  closeMenu(); closeFind(); closePop();
   const getPg = () => S.doc.pages[isInf(S.doc) ? 0 : S.curPage || 0];
   const touch = () => { baseDirty = true; requestFrame(true); scheduleSave(); };
   el = h('div', { id: 'layp', class: 'layp', role: 'dialog', 'aria-label': 'Layers' });
@@ -3800,7 +3799,6 @@ function cardMenu(m) {
     }),
     isFolder(m) && mi('palette', 'Colour and icon…', () => { close(); folderStyleDialog(m); }),
     mi('move', 'Move to…', () => { close(); moveDialog(m); }),
-    mi('check', 'Select several…', () => { close(); L.sel = new Set([m.id]); renderLibrary(); }),
     !PANE && !isFolder(m) && !m.locked && mi('split', 'Open in split screen', () => { close(); openSplit(m.id); }),
     !isFolder(m) && !m.locked && mi('copy', 'Duplicate', async () => { close(); await duplicateDoc(m); refreshLibrary(); }),
     !isFolder(m) && !m.locked && mi('text', 'Copy typed text', () => { close(); copyDocText(m); }),
@@ -4249,7 +4247,7 @@ function toggleSplit() {
 /* ---- drag a tab or a note onto the screen edge to open it side by side ---- */
 function dragToSplit(el, info, opts = {}) {
   if (PANE) return;
-  let timer = null, ready = false, drag = null, sx = 0, sy = 0;
+  let timer = null, ready = false, drag = null, sx = 0, sy = 0, longT = null;
   const folderZones = () => {
     if (!$('#library') || $('#library').hidden || !$('#grid').offsetParent) return [];
     const me = info(), ban = me.type === 'folder' ? descendants(me.id) : new Set(), zs = [];
@@ -4302,7 +4300,7 @@ function dragToSplit(el, info, opts = {}) {
     drag.zs.forEach((z) => z.el.classList.toggle('hot', z === drag.hit));
   };
   const finish = (cancel) => {
-    clearTimeout(timer);
+    clearTimeout(timer); clearTimeout(longT);
     const d = drag, wasReady = ready; drag = null; ready = false;
     document.body.classList.remove('dragging');
     if (winOff) winOff();
@@ -4323,10 +4321,12 @@ function dragToSplit(el, info, opts = {}) {
     sx = e.clientX; sy = e.clientY; ready = false;
     clearTimeout(timer);
     const pid = e.pointerId;
+    clearTimeout(longT);
+    if (opts.onLong) longT = setTimeout(() => { if (drag) return; clearTimeout(timer); ready = false; el.classList.remove('lifted'); el._swallow = true; setTimeout(() => (el._swallow = false), 600); buzz([30, 40, 30]); opts.onLong(); }, opts.longMs || 3000);
     timer = setTimeout(() => { ready = true; buzz(18); el.classList.add('lifted'); try { el.setPointerCapture(pid); } catch {} }, opts.delay || 420);
   });
   el.addEventListener('pointermove', (e) => {
-    if (!ready && !drag) { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) clearTimeout(timer); return; }
+    if (!ready && !drag) { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) { clearTimeout(timer); clearTimeout(longT); } return; }
     if (ready && !drag && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) { try { el.setPointerCapture(e.pointerId); } catch {} begin(e); }
     move(e.clientX, e.clientY);
   });
@@ -4334,6 +4334,12 @@ function dragToSplit(el, info, opts = {}) {
   el.addEventListener('contextmenu', (e) => { if (ready || drag) e.preventDefault(); });
   el.addEventListener('pointerup', () => { el.classList.remove('lifted'); finish(false); });
   el.addEventListener('pointercancel', () => { el.classList.remove('lifted'); finish(true); });
+}
+function prewarmTabs() {
+  if (PANE) return;
+  const idle = window.requestIdleCallback || ((f) => setTimeout(f, 400));
+  const next = () => { const T = S.tabs.find((t) => !t.loaded && t !== S.tab && !(byId(t.id) || {}).locked); if (!T || switching) return; loadTab(T).catch(() => {}).then(() => idle(next)); };
+  idle(next);
 }
 function persistTabs() { if (PANE) return; prefs.set('tabs', S.tabs.map((t) => t.id)); prefs.set('activeTab', S.tab ? S.tab.id : null); }
 
@@ -4354,8 +4360,10 @@ async function leaveTab() {
   const T = S.tab; if (!T) return;
   commitEditor(); closeFind(); closeComment(); closePop(); closeMenu(); $("#sheet").hidden = true; clearSel(); exitPresent(); closeZoom(); stopVideo(); stopAudio();
   T.view = { ...S.view }; T.vw = vw; T.hist = S.hist; T.curPage = S.curPage; T.ruler = S.ruler; S.ruler = null;
-  S.thumb = (await makeThumb()) || S.thumb; T.thumb = S.thumb;
-  await saveNow();
+  if (T.edited || saveTimer != null || !T.thumb) {          // nothing changed since the last save: no thumbnail redraw and no write, so tab switches are instant
+    S.thumb = (await makeThumb()) || S.thumb; T.thumb = S.thumb;
+    await saveNow(); T.edited = false;
+  }
   S.tab = null; S.doc = null; S.pdf = null; S.act = null; S.mode = null; ptr.clear();
 }
 async function showEditor(T) {
@@ -4411,7 +4419,7 @@ async function openDoc(id) {
     T = { id, title: m.title, type: m.type, loaded: false, isNew: true };
     S.tabs.push(T);
   }
-  await switchTo(id);
+  await switchTo(id); prewarmTabs();
 }
 async function closeTab(id) {
   const T = S.tabs.find((t) => t.id === id); if (!T || switching) return;
@@ -5138,7 +5146,7 @@ function featureIndex() {
 }
 /* ⋯ menu: a small command palette. Settings and quick switches on top, then a plain list; type to search every action. */
 function openMenu() {
-  const m = $('#menu'); m.innerHTML = ''; m.hidden = false; menuOpen = true; closeMenu2();
+  const m = $('#menu'); m.innerHTML = ''; m.hidden = false; menuOpen = true; closeMenu2(); closeFind(); closeLayp(); closePop();
   const cats = menuCats(), all = cats.flatMap((c) => c.items.map((o) => ({ ...o, cat: c.name })));
   const run = (o) => { if (!o.keep) closeMenu(); o.fn(); if (o.keep) openMenu(); };
   const quick = ['pin', 'lock', 'palm', 'mic'].map((ic) => all.find((o) => o.ic === ic)).concat(all.find((o) => o.label === (S.doc && isInf(S.doc) ? 'Focus' : 'Bookmark'))).filter(Boolean);
@@ -5960,7 +5968,7 @@ function restoreFindPos() {
 }
 function openFind(q = '') {
   if (!S.doc) return;
-  closePop(); closeMenu(); clearSel();
+  closePop(); closeMenu(); closeLayp(); clearSel();
   const b = ensureFindBar(); b.hidden = false; restoreFindPos();
   S.find = { q, hits: [], i: -1 };
   if (!PANE && Indexer.opts && ocrOn()) { const id = S.doc.id; Promise.resolve().then(() => (saveTimer != null ? saveNow() : null)).catch(() => {}).then(() => { if (S.find && S.doc && S.doc.id === id) Indexer.urgent(id); }); }      // save what you just wrote first, so the reader sees it
@@ -5988,6 +5996,7 @@ function gotoHit(i, quiet) {
   requestFrame();
 }
 const stepFind = (d) => { const f = S.find; if (f && f.hits.length) gotoHit((f.i < 0 ? (d > 0 ? 0 : -1) : f.i + d)); };
+function closeLayp() { const p = $('#layp'); if (p) p.remove(); }
 function closeFind() { S.find = null; pdfWarmT = null; const b = $('#findbar'); if (b) b.hidden = true; requestFrame(); }
 function drawFindHits(ctx, s) {
   const f = S.find; if (!f || !f.hits.length) return;
@@ -6199,6 +6208,7 @@ async function boot() {
   renderTabs();
   const active = prefs.get('activeTab', null);
   if (active && S.tabs.find((t) => t.id === active)) switchTo(active);
+  prewarmTabs();
 }
 boot();
 

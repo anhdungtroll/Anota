@@ -62,6 +62,11 @@ npx cap open android   # then Build → Build APK
 
 Not included yet: audio recording, text search inside notes, handwriting recognition and AI, cloud sync, collaboration.
 
+## What's new in 3.34
+- Select mode starts only when you hold a note or folder for about 3 seconds (hold about half a second and move to drag it into a folder instead). The Select buttons in the side rail, filter row and card menu are gone.
+- Only one floating panel at a time: Find, the ⋯ menu and Layers close each other instead of overlapping.
+- Faster tab switching: a note you did not change is not redrawn or saved again when you leave it, and notes in your other tabs are loaded in the background.
+
 ## What's new in 3.33
 - ⋯ menu rows no longer squeeze together when the keyboard is up: the list scrolls, the quick row hides, and the menu moves up.
 - The + tab button sits right after the last tab; tab width follows how many notes are open.
